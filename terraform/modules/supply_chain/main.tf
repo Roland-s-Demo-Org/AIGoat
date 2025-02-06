@@ -17,6 +17,12 @@ resource "aws_s3_bucket" "sagemaker_similar_images_bucket" {
   force_destroy = true
 }
 
+resource "aws_s3_bucket_public_access_block" "sagemaker_bucket_access" {
+  bucket = aws_s3_bucket.sagemaker_similar_images_bucket.id
+  block_public_acls   = true
+  block_public_policy = true
+}
+
 resource "aws_s3_bucket_object" "lambda_deployment_package" {
   bucket = aws_s3_bucket.sagemaker_similar_images_bucket.id
   key    = "lambda/my_deployment_package.zip"
