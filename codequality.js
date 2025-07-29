@@ -121,3 +121,47 @@ function anotherAssignmentCondition(values) {
         }
     }
 }
+function f1(a, b) {
+    let x = a + b;
+    for (let i = 0; i < 100; i++) {
+        x += i;
+        if (i % 10 === 0) {
+            x += Math.sqrt(i);
+        }
+        for (let j = 0; j < 5; j++) {
+            x += j * i;
+        }
+    }
+    let y = 0;
+    for (let k = 0; k < 50; k++) {
+        y += k;
+        if (y % 3 === 0) {
+            y -= k;
+        }
+    }
+    console.log("Result is: " + (x + y));
+    return x + y;
+}
+
+class C {
+    constructor(d) {
+        this.d = d;
+    }
+
+    doIt() {
+        let r = 0;
+        for (let i = 0; i < this.d.length; i++) {
+            if (this.d[i]) {
+                r += this.d[i] * 2;
+                if (this.d[i] > 100) {
+                    r += this.d[i] / 2;
+                }
+                for (let j = 0; j < 10; j++) {
+                    r += j;
+                }
+            }
+        }
+        console.log("Done doing it: " + r);
+        return r;
+    }
+}
