@@ -35,5 +35,8 @@
     "null-loader": "^3.0.0",
     "typescript": "^5.5.2",
     "webpack-filter-warnings-plugin": "^1.2.1"
+  },
+  "resolutions": {
+    "json5": "2.2.2"
   }
 }
