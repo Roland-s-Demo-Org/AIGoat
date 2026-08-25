@@ -32,11 +32,24 @@ class FlushHandler(logging.StreamHandler):
         self.flush()
 
 
+def get_db_credentials_from_secrets_manager():
+    """Retrieve database credentials from AWS Secrets Manager."""
+    secret_arn = os.environ.get('DB_SECRET_ARN')
+    if not secret_arn:
+        raise ValueError("DB_SECRET_ARN environment variable is not set")
+    
+    region = os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
+    client = boto3.client('secretsmanager', region_name=region)
+    
+    try:
+        response = client.get_secret_value(SecretId=secret_arn)
+        secret = json.loads(response['SecretString'])
+        return secret
+    except Exception as e:
+        raise Exception(f"Failed to retrieve database credentials: {str(e)}")
+
+
 parser = argparse.ArgumentParser(description='Flask Application')
-parser.add_argument('--db_user', type=str, default='pos_user', help='Database username')
-parser.add_argument('--db_password', type=str, default='password123', help='Database password')
-parser.add_argument('--db_host', type=str, default='localhost', help='Database host')
-parser.add_argument('--db_name', type=str, default='rds-database', help='Database name')
 parser.add_argument('--comments_api_gateway', type=str, help='Comments api gateway URL')
 parser.add_argument('--similar_images_api_gateway', type=str, help='Similar images api gateway URL')
 parser.add_argument('--similar_images_bucket', type=str, help='Similar images bucket name')
@@ -53,7 +66,9 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 logging.basicConfig(level=logging.DEBUG)
 app.logger.addHandler(FlushHandler())
 
-app.config['SQLALCHEMY_DATABASE_URI'] = f'postgresql://{args.db_user}:{args.db_password}@{args.db_host}:5432/{args.db_name}'
+# Retrieve database credentials from Secrets Manager
+db_credentials = get_db_credentials_from_secrets_manager()
+app.config['SQLALCHEMY_DATABASE_URI'] = f'postgresql://{db_credentials["username"]}:{db_credentials["password"]}@{db_credentials["host"]}:5432/{db_credentials["dbname"]}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 

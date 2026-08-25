@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import boto3
 from flask import Flask
 from models import db, Product, Category, User, Comment
 from datetime import datetime
@@ -11,17 +12,27 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='Configure database connection parameters.')
-    parser.add_argument('--db_user', type=str, default='pos_user', help='Database user')
-    parser.add_argument('--db_password', type=str, default='password123', help='Database password')
-    parser.add_argument('--db_host', type=str, default='localhost', help='Database host')
-    parser.add_argument('--db_name', type=str, default='rds-database', help='Database name')
-    return parser.parse_args()
+def get_db_credentials_from_secrets_manager():
+    """Retrieve database credentials from AWS Secrets Manager."""
+    secret_arn = os.environ.get('DB_SECRET_ARN')
+    if not secret_arn:
+        raise ValueError("DB_SECRET_ARN environment variable is not set")
+    
+    region = os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
+    client = boto3.client('secretsmanager', region_name=region)
+    
+    try:
+        response = client.get_secret_value(SecretId=secret_arn)
+        secret = json.loads(response['SecretString'])
+        return secret
+    except Exception as e:
+        raise Exception(f"Failed to retrieve database credentials: {str(e)}")
 
 
-def configure_app(app, db_user, db_password, db_host, db_name):
-    app.config['SQLALCHEMY_DATABASE_URI'] = f'postgresql://{db_user}:{db_password}@{db_host}:5432/{db_name}'
+def configure_app(app):
+    """Configure the Flask app with database credentials from Secrets Manager."""
+    db_credentials = get_db_credentials_from_secrets_manager()
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'postgresql://{db_credentials["username"]}:{db_credentials["password"]}@{db_credentials["host"]}:5432/{db_credentials["dbname"]}'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 
@@ -197,8 +208,7 @@ def migrate_users(users):
 
 if __name__ == "__main__":
     with app.app_context():
-        args = parse_args()
-        configure_app(app, args.db_user, args.db_password, args.db_host, args.db_name)
+        configure_app(app)
         db.init_app(app)
         db.create_all()
         migrate_products(load_json('products.json'))
