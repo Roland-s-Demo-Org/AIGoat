@@ -10,10 +10,6 @@ jobs:
     name: 'Terraform'
     runs-on: ubuntu-latest
     environment: production
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: "us-east-1"
 
     defaults:
       run:
@@ -23,6 +19,14 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v3
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+        mask-aws-account-id: true
 
     - name: Set Account ID
       id: account
@@ -34,7 +38,7 @@ jobs:
         BUCKET_NAME="aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }}"
         if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
           echo "Creating S3 bucket: $BUCKET_NAME"
-          aws s3api create-bucket --bucket "$BUCKET_NAME" --region $AWS_REGION
+          aws s3api create-bucket --bucket "$BUCKET_NAME" --region us-east-1
         else
           echo "S3 bucket already exists: $BUCKET_NAME"
         fi
@@ -50,6 +54,11 @@ jobs:
           echo "STATE_EXISTS=false" >> $GITHUB_OUTPUT
         fi
 
+    - name: Retrieve existing state file
+      if: steps.check_state.outputs.STATE_EXISTS == 'true'
+      run: |
+        aws s3 cp s3://aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }}/terraform.tfstate ./terraform.tfstate || true
+
     - name: Setup Python
       uses: actions/setup-python@v2
       with:
@@ -61,11 +70,6 @@ jobs:
     - name: Terraform Operations
       run: |
         set -e  # Exit immediately if a command exits with a non-zero status
-        
-        # Retrieve existing state if it exists
-        if [[ "${{ steps.check_state.outputs.STATE_EXISTS }}" == "true" ]]; then
-          aws s3 cp s3://aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }}/terraform.tfstate ./terraform.tfstate || true
-        fi
         
         # Terraform Init
         terraform init
