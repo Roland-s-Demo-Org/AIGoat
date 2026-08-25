@@ -411,7 +411,7 @@ def hint_1_3():
     return "SSRF - Super Stuffed Rainbow Fluff"
 @app.route('/hints/challenge2/1', methods=['GET'])
 def hint_2_1():
-    return f'{args.data_poisoning_bucket}'
+    return "Check the application logs for configuration details"
 
 @app.route('/hints/challenge2/2', methods=['GET'])
 def hint_2_2():

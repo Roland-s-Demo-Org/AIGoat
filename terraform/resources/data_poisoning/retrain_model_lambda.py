@@ -3,28 +3,64 @@ import time
 import datetime
 import logging
 import os
+import hashlib
+
 # Set up logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+def verify_s3_object_integrity(s3_client, bucket, key, version_id):
+    """Verify S3 object exists with specific version ID"""
+    try:
+        response = s3_client.head_object(Bucket=bucket, Key=key, VersionId=version_id)
+        logger.info(f"Verified object {key} with version {version_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to verify object {key} with version {version_id}: {str(e)}")
+        return False
+
 def lambda_handler(event, context):
     # Code to trigger retraining
     retrain_model()
+
 def retrain_model():
     sm_client = boto3.client('sagemaker')
     iam_client = boto3.client('iam')
-    logger.info(f"starting proccess +{datetime.datetime.now()}")
+    s3_client = boto3.client('s3')
+    
+    logger.info(f"starting process +{datetime.datetime.now()}")
+    
     # Get the SageMaker execution role
     role_name = os.environ['SAGEMAKER_ROLE_NAME']
     s3_bucket_uri = os.environ['S3_BUCKET_URI']
+    code_archive_version_id = os.environ.get('CODE_ARCHIVE_VERSION_ID')
+    allowed_training_images = os.environ.get('ALLOWED_TRAINING_IMAGES', '').split(',')
+    
+    # Verify code archive integrity using version ID
+    if not code_archive_version_id:
+        raise Exception("CODE_ARCHIVE_VERSION_ID not configured - cannot proceed without integrity protection")
+    
+    if not verify_s3_object_integrity(s3_client, s3_bucket_uri, 'code/code.tar.gz', code_archive_version_id):
+        raise Exception("Code archive integrity verification failed")
+    
     role_response = iam_client.get_role(RoleName=role_name)
     role_arn = role_response['Role']['Arn']
+    
+    # Use approved training image
+    training_image = allowed_training_images[0] if allowed_training_images else None
+    if not training_image:
+        raise Exception("No approved training image configured")
+    
     # Create training job
     training_job_name = f'sklearn-training-job-{int(time.time())}'
+    
+    # Use versioned S3 URI for code archive
+    code_s3_uri = f's3://{s3_bucket_uri}/code/code.tar.gz?versionId={code_archive_version_id}'
+    
     sm_client.create_training_job(
         TrainingJobName=training_job_name,
         AlgorithmSpecification={
-            'TrainingImage': '683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
-            # Adjust region if needed
+            'TrainingImage': training_image,
             'TrainingInputMode': 'File'
         },
         RoleArn=role_arn,
@@ -42,7 +78,7 @@ def retrain_model():
             }
         ],
         OutputDataConfig={
-            'S3OutputPath': f's3://{s3_bucket_uri}/'
+            'S3OutputPath': f's3://{s3_bucket_uri}/output/'
         },
         ResourceConfig={
             'InstanceType': 'ml.m5.4xlarge',
@@ -50,9 +86,9 @@ def retrain_model():
             'VolumeSizeInGB': 30
         },
         HyperParameters={
-            'sagemaker_program': 'training_script.py',  # This replaces the EntryPoint
-            'sagemaker_submit_directory': f's3://{s3_bucket_uri}/code/code.tar.gz', # Ensure your script is in this S3 location
-            'bucket_name': s3_bucket_uri  # Pass the S3 bucket name as a hyperparameter
+            'sagemaker_program': 'training_script.py',
+            'sagemaker_submit_directory': code_s3_uri,
+            'bucket_name': s3_bucket_uri
         },
         StoppingCondition={
             'MaxRuntimeInSeconds': 86400
@@ -68,25 +104,28 @@ def retrain_model():
     if status != 'Completed':
         raise Exception(f"Training job failed with status: {status}")
     logger.info("training done\n starting model creation")
+    
+    # Get the model artifact location from training job
+    training_job_response = sm_client.describe_training_job(TrainingJobName=training_job_name)
+    model_data_url = training_job_response['ModelArtifacts']['S3ModelArtifacts']
+    logger.info(f"Using model artifact from training job: {model_data_url}")
     # Create model
     model_name = f'sklearn-model-{int(time.time())}'
     sm_client.create_model(
         ModelName=model_name,
         PrimaryContainer={
-            'Image': '683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
-            # Adjust region if needed
-            'ModelDataUrl': f"s3://{s3_bucket_uri}/model.tar.gz",
+            'Image': training_image,
+            'ModelDataUrl': model_data_url,  # Use output from training job, not mutable bucket path
             'Environment': {
                 'SAGEMAKER_PROGRAM': 'inference.py',
-                'SAGEMAKER_SUBMIT_DIRECTORY': f's3://{s3_bucket_uri}/code/code.tar.gz'
-                # Ensure your inference script is in this S3 location
+                'SAGEMAKER_SUBMIT_DIRECTORY': code_s3_uri  # Use versioned code archive
             }
         },
         ExecutionRoleArn=role_arn
     )
     logger.info("done model creation")
     # Create endpoint configuration
-    endpoint_config_name = f'endpoint-config-1722516468'
+    endpoint_config_name = f'endpoint-config-{int(time.time())}'
     sm_client.create_endpoint_config(
         EndpointConfigName=endpoint_config_name,
         ProductionVariants=[
