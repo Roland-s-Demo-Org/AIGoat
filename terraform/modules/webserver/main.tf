@@ -4,8 +4,10 @@ variable "subnet_group_id" {}
 variable "output_integrity_api_endpoint" {}
 variable "supply_chain_api_endpoint" {}
 variable "supply_chain_bucket_name" {}
+variable "supply_chain_bucket_arn" {}
 variable "data_poisoning_api_endpoint" {}
 variable "data_poisoning_bucket_name" {}
+variable "data_poisoning_bucket_arn" {}
 
 resource "aws_key_pair" "key-auth" {
   key_name   = "webserver-key"
@@ -28,7 +30,12 @@ data aws_iam_policy_document "s3_read_access" {
   statement {
     actions = ["s3:Get*", "s3:List*", "s3:PutObject"]
 
-    resources = ["arn:aws:s3:::*"]
+    resources = [
+      var.supply_chain_bucket_arn,
+      "${var.supply_chain_bucket_arn}/*",
+      var.data_poisoning_bucket_arn,
+      "${var.data_poisoning_bucket_arn}/*"
+    ]
   }
 }
 
@@ -196,7 +203,7 @@ resource "aws_db_instance" "rds" {
   allocated_storage    =  10
   engine_version       = data.aws_rds_engine_version.postgres.version
   username             = "pos_user"
-  password             = "password123"
+  password             = ****123"
   vpc_security_group_ids = ["${aws_security_group.rds_sg.id}"]
   db_subnet_group_name   = var.subnet_group_id
   skip_final_snapshot  = true
