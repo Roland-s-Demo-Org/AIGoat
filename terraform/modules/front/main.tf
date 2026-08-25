@@ -97,6 +97,14 @@ resource "aws_s3_bucket_object" "frontend_bucket" {
 
 }
 
+# Security: S3 website endpoints only support HTTP, not HTTPS.
+# For production deployments requiring HTTPS (which is necessary to protect
+# authentication credentials and tokens), this bucket must be fronted by:
+# - Amazon CloudFront distribution with a valid TLS certificate, OR
+# - Application Load Balancer with TLS termination, OR
+# - Another HTTPS-capable CDN/proxy
+# Direct use of the S3 website endpoint exposes all traffic, including
+# login credentials and bearer tokens, to plaintext interception.
 resource "aws_s3_bucket_website_configuration" "frontend_website" {
   bucket = aws_s3_bucket.frontend_bucket.id
 

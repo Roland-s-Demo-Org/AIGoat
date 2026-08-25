@@ -156,16 +156,28 @@ resource "aws_security_group" "ec2-sg" {
     security_groups = [aws_security_group.rds_sg.id]
     # cidr_blocks = [aws_security_group.allow_http.id]
   }
+  # Security: Port 8000 should NOT be exposed to 0.0.0.0/0 in production.
+  # The Flask application should bind to 127.0.0.1 and be fronted by a 
+  # TLS-terminating reverse proxy (nginx, ALB) that listens on port 443.
+  # This ingress rule allows direct plaintext access and should be removed
+  # or restricted to internal/proxy sources only.
   ingress {
     from_port       = 8000
     to_port         = 8000
     protocol        = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["0.0.0.0/0"]  # SECURITY RISK: Remove or restrict this rule
     # cidr_blocks = [aws_security_group.allow_http.id]
   }
   ingress {
     from_port   = 80
     to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  # Security: Add HTTPS ingress for TLS-terminating reverse proxy
+  ingress {
+    from_port   = 443
+    to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -196,7 +208,7 @@ resource "aws_db_instance" "rds" {
   allocated_storage    =  10
   engine_version       = data.aws_rds_engine_version.postgres.version
   username             = "pos_user"
-  password             = "password123"
+  password             = ****123"
   vpc_security_group_ids = ["${aws_security_group.rds_sg.id}"]
   db_subnet_group_name   = var.subnet_group_id
   skip_final_snapshot  = true

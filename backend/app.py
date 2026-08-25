@@ -430,4 +430,21 @@ def hint_3_3():
     return 'When an answer is provided, is there a point in asking a question?'
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000, debug=True)
+    # Security: In production, Flask should only bind to localhost and be fronted by a TLS-terminating
+    # reverse proxy (e.g., nginx, ALB). Direct exposure of Flask on 0.0.0.0 without TLS allows
+    # plaintext credential and token interception.
+    environment = os.getenv('FLASK_ENV', 'production')
+    
+    if environment == 'development':
+        # Development mode: bind to all interfaces for local testing
+        app.run(host='0.0.0.0', port=8000, debug=True)
+    else:
+        # Production mode: bind to localhost only, require TLS proxy
+        # The application must be deployed behind a TLS-terminating reverse proxy
+        # that handles HTTPS and forwards to localhost:8000
+        app.logger.warning(
+            'Production mode: Flask is binding to 127.0.0.1:8000. '
+            'Ensure a TLS-terminating reverse proxy (nginx, ALB, etc.) is configured '
+            'to handle HTTPS traffic and forward to this local endpoint.'
+        )
+        app.run(host='127.0.0.1', port=8000, debug=False)
