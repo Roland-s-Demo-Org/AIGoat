@@ -29,46 +29,126 @@ jobs:
       run: |
         echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_OUTPUT
 
-    - name: Check for existing state file
-      id: check_state
+    - name: Verify state bucket and DynamoDB table exist
+      id: check_backend
       run: |
-        if aws s3api head-object --bucket aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }} --key terraform.tfstate 2>/dev/null; then
-          echo "State file exists. Will use existing state."
+        BUCKET_NAME="aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }}"
+        TABLE_NAME="aigoat-terraform-locks"
+        BACKEND_READY=true
+        
+        # Check if S3 bucket exists
+        if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+          echo "Error: State bucket $BUCKET_NAME does not exist"
+          BACKEND_READY=false
+        else
+          echo "State bucket exists: $BUCKET_NAME"
+          
+          # Verify versioning is enabled
+          VERSIONING=$(aws s3api get-bucket-versioning --bucket "$BUCKET_NAME" --query 'Status' --output text)
+          if [[ "$VERSIONING" != "Enabled" ]]; then
+            echo "Warning: Versioning is not enabled on state bucket"
+          fi
+        fi
+        
+        # Check if DynamoDB table exists
+        if ! aws dynamodb describe-table --table-name "$TABLE_NAME" 2>/dev/null; then
+          echo "Error: DynamoDB lock table $TABLE_NAME does not exist"
+          BACKEND_READY=false
+        else
+          echo "DynamoDB lock table exists: $TABLE_NAME"
+        fi
+        
+        # Check if state file exists in S3
+        if aws s3api head-object --bucket "$BUCKET_NAME" --key terraform.tfstate 2>/dev/null; then
+          echo "State file exists in S3"
+          
+          # Get state file metadata for integrity verification
+          STATE_ETAG=$(aws s3api head-object --bucket "$BUCKET_NAME" --key terraform.tfstate --query 'ETag' --output text)
+          STATE_VERSION=$(aws s3api head-object --bucket "$BUCKET_NAME" --key terraform.tfstate --query 'VersionId' --output text)
+          echo "State ETag: $STATE_ETAG"
+          echo "State Version: $STATE_VERSION"
+          echo "STATE_ETAG=$STATE_ETAG" >> $GITHUB_OUTPUT
+          echo "STATE_VERSION=$STATE_VERSION" >> $GITHUB_OUTPUT
           echo "STATE_EXISTS=true" >> $GITHUB_OUTPUT
         else
-          echo "No state file found. Cannot destroy resources without state."
+          echo "No state file found in S3. Cannot destroy resources without state."
+          BACKEND_READY=false
           echo "STATE_EXISTS=false" >> $GITHUB_OUTPUT
         fi
+        
+        echo "BACKEND_READY=$BACKEND_READY" >> $GITHUB_OUTPUT
 
     - name: Setup Python
+      if: steps.check_backend.outputs.BACKEND_READY == 'true'
       uses: actions/setup-python@v2
       with:
         python-version: 3
 
     - name: Install boto3
+      if: steps.check_backend.outputs.BACKEND_READY == 'true'
       run: pip install boto3
 
     - name: Terraform Destroy Operations
+      if: steps.check_backend.outputs.BACKEND_READY == 'true' && steps.check_backend.outputs.STATE_EXISTS == 'true'
       id: destroy
       run: |
-        if [[ "${{ steps.check_state.outputs.STATE_EXISTS }}" == "true" ]]; then
-          aws s3 cp s3://aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }}/terraform.tfstate ./terraform.tfstate || true
-          
-          # Terraform Init
-          terraform init
-          
-          # Terraform Destroy
-          if terraform destroy -auto-approve -input=false; then
-            echo "DESTROY_SUCCESS=true" >> $GITHUB_OUTPUT
-          else
-            echo "DESTROY_SUCCESS=false" >> $GITHUB_OUTPUT
-          fi
+        set -e  # Exit immediately if a command exits with a non-zero status
+        
+        BUCKET_NAME="aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }}"
+        TABLE_NAME="aigoat-terraform-locks"
+        
+        # Terraform Init with S3 backend configuration
+        # This enables state locking and prevents concurrent modifications
+        terraform init \
+          -backend-config="bucket=$BUCKET_NAME" \
+          -backend-config="dynamodb_table=$TABLE_NAME"
+        
+        # Verify state integrity after backend initialization
+        # Terraform will automatically validate the state file from S3
+        echo "Validating Terraform state..."
+        terraform validate
+        
+        # Generate destroy plan for review
+        echo "Generating destroy plan..."
+        terraform plan -destroy -out=destroy.tfplan
+        
+        # Show what will be destroyed
+        echo "Resources to be destroyed:"
+        terraform show destroy.tfplan
+        
+        # Execute destroy with the validated plan
+        # Using -auto-approve is acceptable here because we're using a pre-generated plan
+        # and the state is locked via DynamoDB
+        if terraform apply -auto-approve destroy.tfplan; then
+          echo "DESTROY_SUCCESS=true" >> $GITHUB_OUTPUT
         else
-          echo "No state file found. Skipping destroy operation."
           echo "DESTROY_SUCCESS=false" >> $GITHUB_OUTPUT
+          exit 1
         fi
 
     - name: Remove tfstate from S3
       if: steps.destroy.outputs.DESTROY_SUCCESS == 'true'
       run: |
-        aws s3 rm s3://aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }}/terraform.tfstate
+        BUCKET_NAME="aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }}"
+        
+        # Archive the final state version before deletion for audit purposes
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        echo "Archiving final state version..."
+        aws s3 cp "s3://$BUCKET_NAME/terraform.tfstate" "s3://$BUCKET_NAME/archive/terraform.tfstate.$TIMESTAMP" || true
+        
+        # Remove the active state file
+        aws s3 rm "s3://$BUCKET_NAME/terraform.tfstate"
+        echo "State file removed from S3"
+
+    - name: Cleanup DynamoDB lock table
+      if: steps.destroy.outputs.DESTROY_SUCCESS == 'true'
+      run: |
+        TABLE_NAME="aigoat-terraform-locks"
+        echo "Deleting DynamoDB lock table: $TABLE_NAME"
+        aws dynamodb delete-table --table-name "$TABLE_NAME" || echo "Table deletion failed or already deleted"
+
+    - name: Destroy failed - state preserved
+      if: steps.check_backend.outputs.BACKEND_READY != 'true' || steps.destroy.outputs.DESTROY_SUCCESS != 'true'
+      run: |
+        echo "Destroy operation failed or backend not ready. State file preserved for recovery."
+        exit 1

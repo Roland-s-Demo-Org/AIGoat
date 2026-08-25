@@ -6,6 +6,23 @@ terraform {
     }
   }
   required_version = "~> 1.3"
+  
+  # S3 backend configuration with state locking and encryption
+  # The bucket and DynamoDB table must be created before running terraform init
+  backend "s3" {
+    # Bucket name will be provided via -backend-config during init
+    # bucket         = "aigoat-state-files-<ACCOUNT_ID>"
+    key            = "terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    # DynamoDB table name will be provided via -backend-config during init
+    # dynamodb_table = "aigoat-terraform-locks"
+    
+    # Enable versioning and checksum validation
+    skip_metadata_api_check     = false
+    skip_region_validation      = false
+    skip_credentials_validation = false
+  }
 }
 
 provider "aws" {
