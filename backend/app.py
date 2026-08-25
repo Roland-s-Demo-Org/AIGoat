@@ -14,6 +14,10 @@ from botocore.exceptions import NoCredentialsError
 from vulnerable_image_processor import process_image
 from sklearn.metrics.pairwise import cosine_similarity
 import pickle
+import hmac
+import hashlib
+import io
+import numpy as np
 from sqlalchemy import func, cast, and_, or_, case
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -92,6 +96,89 @@ user_carts = {
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'jpg', 'jpeg', 'png'}
+
+
+class RestrictedUnpickler(pickle.Unpickler):
+    """
+    Restricted unpickler that only allows safe types for deserialization.
+    This prevents arbitrary code execution via malicious pickle files.
+    """
+    # Whitelist of safe types that can be unpickled
+    ALLOWED_MODULES = {
+        'numpy.core.multiarray',
+        'numpy',
+        'numpy.ndarray',
+        'builtins',
+        'collections',
+    }
+    
+    ALLOWED_CLASSES = {
+        'dict',
+        'list',
+        'tuple',
+        'set',
+        'frozenset',
+        'str',
+        'int',
+        'float',
+        'bool',
+        'NoneType',
+        '_reconstruct',
+        'ndarray',
+        'dtype',
+    }
+
+    def find_class(self, module, name):
+        """
+        Override find_class to restrict which classes can be unpickled.
+        Only allow safe numpy and built-in types.
+        """
+        # Allow only whitelisted modules and classes
+        if module in self.ALLOWED_MODULES and name in self.ALLOWED_CLASSES:
+            return super().find_class(module, name)
+        
+        # Raise an error for any non-whitelisted class
+        raise pickle.UnpicklingError(
+            f"Attempted to unpickle unsafe class: {module}.{name}"
+        )
+
+
+def verify_pickle_integrity(data, expected_signature):
+    """
+    Verify the HMAC signature of pickle data to ensure integrity.
+    
+    Args:
+        data: The pickle data bytes
+        expected_signature: The expected HMAC signature (hex string)
+    
+    Returns:
+        bool: True if signature is valid, False otherwise
+    """
+    # Use a secret key from environment or config
+    # In production, this should be stored securely (e.g., AWS Secrets Manager)
+    secret_key = os.environ.get('PICKLE_INTEGRITY_KEY', app.config.get('SECRET_KEY', '')).encode('utf-8')
+    
+    # Calculate HMAC-SHA256 of the data
+    calculated_signature = hmac.new(secret_key, data, hashlib.sha256).hexdigest()
+    
+    # Use constant-time comparison to prevent timing attacks
+    return hmac.compare_digest(calculated_signature, expected_signature)
+
+
+def safe_pickle_loads(data):
+    """
+    Safely load pickle data using the restricted unpickler.
+    
+    Args:
+        data: The pickle data bytes
+    
+    Returns:
+        The unpickled object
+    
+    Raises:
+        pickle.UnpicklingError: If unsafe classes are detected
+    """
+    return RestrictedUnpickler(io.BytesIO(data)).load()
 
 
 def get_product_by_id(product_id):
@@ -188,8 +275,20 @@ def find_similar_images(query_features, features, top_n=5):
 
 @app.route('/api/analyze-photo', methods=['OPTIONS', 'POST'])
 def product_lookup():
+    # Handle CORS preflight without authentication
     if request.method == 'OPTIONS':
         return '', 204
+    
+    # Require authentication for POST requests
+    token = request.headers.get('Authorization').split(" ")[1] if 'Authorization' in request.headers else None
+    if not token:
+        return jsonify({'message': 'Token is missing!'}), 403
+
+    try:
+        data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+        current_user = data['username']
+    except:
+        return jsonify({'message': 'Token is invalid!'}), 403
 
     matched_products = []
     if request.method == 'POST':
@@ -236,8 +335,31 @@ def product_lookup():
 
         features_file_key = 'image_features.pkl'  # S3 key for the features file
 
-        response = s3.get_object(Bucket=bucket_name, Key=features_file_key)
-        features = pickle.loads(response['Body'].read())
+        try:
+            # Retrieve the pickle file from S3
+            response = s3.get_object(Bucket=bucket_name, Key=features_file_key)
+            pickle_data = response['Body'].read()
+            
+            # Optional: Verify HMAC signature if present in object metadata
+            # This provides an additional layer of integrity verification
+            metadata = response.get('Metadata', {})
+            if 'hmac-signature' in metadata:
+                expected_signature = metadata['hmac-signature']
+                if not verify_pickle_integrity(pickle_data, expected_signature):
+                    app.logger.error("HMAC signature verification failed for pickle file")
+                    return jsonify({'error': 'Integrity verification failed for features file'}), 500
+                app.logger.info("HMAC signature verified successfully")
+            
+            # Use the restricted unpickler to safely load the data
+            features = safe_pickle_loads(pickle_data)
+            app.logger.info("Successfully loaded features using restricted unpickler")
+            
+        except pickle.UnpicklingError as e:
+            app.logger.error(f"Unsafe pickle detected: {e}")
+            return jsonify({'error': 'Invalid or unsafe features file format'}), 500
+        except Exception as e:
+            app.logger.error(f"Error loading features file: {e}")
+            return jsonify({'error': 'Failed to load features file'}), 500
 
         payload = {
             'bucket_name': bucket_name,
