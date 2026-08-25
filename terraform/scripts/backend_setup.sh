@@ -9,7 +9,8 @@ pip3 install -r requirements.txt
 
 # Set environment variables
 echo "FLASK_APP=app.py" >> ~/.bashrc
-echo "DATABASE_URL=postgresql://pos_user:password123@${aws_db_instance.rds.endpoint}/rds-database" >> ~/.bashrc
+# Database credentials are retrieved from AWS Secrets Manager via environment variables
+# DB_SECRET_ARN and AWS_DEFAULT_REGION should be set before running this script
 source ~/.bashrc
 
 # Run migrations
