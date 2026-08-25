@@ -11,6 +11,8 @@ resource "random_string" "suffix" {
   lower   = true
 }
 
+data "aws_caller_identity" "current" {}
+
 # S3 Bucket for SageMaker data
 resource "aws_s3_bucket" "sagemaker_similar_images_bucket" {
   bucket = "sagemaker-similar-images-bucket-${random_string.suffix.result}"
@@ -45,11 +47,6 @@ resource "aws_iam_role" "sagemaker_similar_images_execution_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "sagemaker_role_policy_attachment" {
-  role       = aws_iam_role.sagemaker_similar_images_execution_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
-}
-
 resource "aws_iam_role_policy" "sagemaker_similar_images_bucket_policy" {
   name = "SageMakerS3Policy"
   role = aws_iam_role.sagemaker_similar_images_execution_role.id
@@ -67,7 +64,76 @@ resource "aws_iam_role_policy" "sagemaker_similar_images_bucket_policy" {
       {
         Effect   = "Allow",
         Action   = "iam:GetRole",
+        Resource = aws_iam_role.sagemaker_similar_images_execution_role.arn
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "sagemaker_core_permissions" {
+  name = "SageMakerCorePermissions"
+  role = aws_iam_role.sagemaker_similar_images_execution_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sagemaker:CreateTrainingJob",
+          "sagemaker:DescribeTrainingJob",
+          "sagemaker:CreateModel",
+          "sagemaker:DescribeModel",
+          "sagemaker:DeleteModel",
+          "sagemaker:CreateEndpointConfig",
+          "sagemaker:DescribeEndpointConfig",
+          "sagemaker:DeleteEndpointConfig",
+          "sagemaker:CreateEndpoint",
+          "sagemaker:DescribeEndpoint",
+          "sagemaker:UpdateEndpoint",
+          "sagemaker:DeleteEndpoint",
+          "sagemaker:InvokeEndpoint",
+          "sagemaker:ListTags",
+          "sagemaker:AddTags"
+        ]
+        Resource = [
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:training-job/*",
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:model/*",
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:endpoint-config/*",
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:endpoint/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage"
+        ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams"
+        ]
+        Resource = "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/sagemaker/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:PutMetricData"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = "AWS/SageMaker"
+          }
+        }
       }
     ]
   })
@@ -104,7 +170,7 @@ resource "aws_iam_role_policy" "lambda_invoke_sagemaker_policy" {
         Action = [
           "sagemaker:InvokeEndpoint"
         ],
-        Resource = "*"
+        Resource = "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:endpoint/*"
       },
       {
         Effect = "Allow",
@@ -120,30 +186,6 @@ resource "aws_iam_role_policy" "lambda_invoke_sagemaker_policy" {
     ]
   })
 }
-
-resource "aws_iam_role_policy" "sagemaker_additional_policy" {
-  name = "SageMakerAdditionalPolicy"
-  role = aws_iam_role.sagemaker_similar_images_execution_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:*",
-          "sagemaker:*",
-          "ecr:GetAuthorizationToken",
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
 
 # Lambda function
 resource "aws_lambda_function" "similar_images_lambda" {
