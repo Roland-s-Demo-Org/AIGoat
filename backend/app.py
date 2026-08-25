@@ -42,11 +42,22 @@ parser.add_argument('--similar_images_api_gateway', type=str, help='Similar imag
 parser.add_argument('--similar_images_bucket', type=str, help='Similar images bucket name')
 parser.add_argument('--get_recs_api_gateway', type=str, help='Get user recommendations api gateway URL')
 parser.add_argument('--data_poisoning_bucket', type=str, help='Data Poisoning bucket name')
+parser.add_argument('--jwt_secret_key', type=str, help='JWT signing secret key (required for production)')
 
 args = parser.parse_args()
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'a_secret_key_that_you_should_change'
+
+# JWT secret key must be provided via environment variable or command-line argument
+# This prevents source-controlled secrets and enables per-deployment key rotation
+jwt_secret = os.environ.get('JWT_SECRET_KEY') or args.jwt_secret_key
+if not jwt_secret:
+    raise ValueError(
+        "JWT secret key must be provided via JWT_SECRET_KEY environment variable "
+        "or --jwt_secret_key command-line argument. This key is used for signing "
+        "authentication tokens and must be kept secret and unique per deployment."
+    )
+app.config['SECRET_KEY'] = jwt_secret
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
 CORS(app, resources={r"/*": {"origins": "*"}})
