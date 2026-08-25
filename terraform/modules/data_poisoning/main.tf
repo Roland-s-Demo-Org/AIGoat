@@ -33,42 +33,37 @@ resource "aws_s3_bucket_policy" "s3_bucket_policy" {
   bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
   depends_on = [aws_s3_bucket_ownership_controls.s3_bucket_acl_ownership]
 
-  policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "s3:ListBucket",
-        "s3:GetObject",
-        "s3:DeleteObject",
-        "s3:PutBucketPolicy"
-      ],
-      "Resource": [
-        "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}",
-        "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
-      ]
-    },
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "s3:PutObject"
-      ],
-      "Resource": "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*",
-      "Condition": {
-        "StringEquals": {
-          "s3:x-amz-acl": "bucket-owner-full-control"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Principal = {
+          Service = [
+            "sagemaker.amazonaws.com",
+            "lambda.amazonaws.com"
+          ]
+        },
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ],
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ],
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
         }
       }
-    }
-  ]
-}
-EOF
+    ]
+  })
 }
 
+data "aws_caller_identity" "current" {}
 
 resource "aws_s3_bucket_ownership_controls" "s3_bucket_acl_ownership" {
   bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
@@ -81,10 +76,10 @@ resource "aws_s3_bucket_ownership_controls" "s3_bucket_acl_ownership" {
 resource "aws_s3_bucket_public_access_block" "public_access_allow" {
   bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
 
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
 
@@ -128,11 +123,6 @@ resource "aws_iam_role" "sagemaker_recommendation_execution_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "sagemaker_role_policy_attachment" {
-  role       = aws_iam_role.sagemaker_recommendation_execution_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
-}
-
 resource "aws_iam_role_policy" "sagemaker_recommendation_bucket_policy" {
   name = "SageMakerS3Policy"
   role = aws_iam_role.sagemaker_recommendation_execution_role.id
@@ -141,7 +131,12 @@ resource "aws_iam_role_policy" "sagemaker_recommendation_bucket_policy" {
     Statement = [
       {
         Effect   = "Allow",
-        Action   = ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+        Action   = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ],
         Resource = [
           aws_s3_bucket.sagemaker_recommendation_bucket.arn,
           "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
@@ -150,12 +145,86 @@ resource "aws_iam_role_policy" "sagemaker_recommendation_bucket_policy" {
       {
         Effect   = "Allow",
         Action   = "iam:GetRole",
-        Resource = "*"
+        Resource = aws_iam_role.sagemaker_recommendation_execution_role.arn
       },
       {
         Effect   = "Allow",
         Action   = "iam:PassRole",
+        Resource = aws_iam_role.sagemaker_recommendation_execution_role.arn,
+        Condition = {
+          StringEquals = {
+            "iam:PassedToService" = "sagemaker.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "sagemaker_core_permissions" {
+  name = "SageMakerCorePermissions"
+  role = aws_iam_role.sagemaker_recommendation_execution_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "sagemaker:CreateTrainingJob",
+          "sagemaker:DescribeTrainingJob",
+          "sagemaker:CreateModel",
+          "sagemaker:DescribeModel",
+          "sagemaker:DeleteModel",
+          "sagemaker:CreateEndpointConfig",
+          "sagemaker:DescribeEndpointConfig",
+          "sagemaker:DeleteEndpointConfig",
+          "sagemaker:CreateEndpoint",
+          "sagemaker:DescribeEndpoint",
+          "sagemaker:UpdateEndpoint",
+          "sagemaker:DeleteEndpoint",
+          "sagemaker:InvokeEndpoint",
+          "sagemaker:ListTags",
+          "sagemaker:AddTags"
+        ],
+        Resource = [
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:training-job/*",
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:model/*",
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:endpoint-config/*",
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:endpoint/*"
+        ]
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage"
+        ],
         Resource = "*"
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams"
+        ],
+        Resource = "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/sagemaker/*"
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "cloudwatch:PutMetricData"
+        ],
+        Resource = "*",
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = "AWS/SageMaker"
+          }
+        }
       }
     ]
   })
@@ -192,7 +261,7 @@ resource "aws_iam_role_policy" "lambda_invoke_sagemaker_policy" {
         Action = [
           "sagemaker:InvokeEndpoint"
         ],
-        Resource = "*"
+        Resource = "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:endpoint/*"
       },
       {
         Effect = "Allow",
@@ -204,29 +273,6 @@ resource "aws_iam_role_policy" "lambda_invoke_sagemaker_policy" {
           aws_s3_bucket.sagemaker_recommendation_bucket.arn,
           "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
         ]
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy" "sagemaker_additional_policy" {
-  name = "SageMakerAdditionalPolicy"
-  role = aws_iam_role.sagemaker_recommendation_execution_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Effect = "Allow",
-        Action = [
-          "s3:*",
-          "sagemaker:*",
-          "ecr:GetAuthorizationToken",
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage"
-        ],
-        Resource = "*"
       }
     ]
   })
@@ -365,7 +411,7 @@ resource "aws_iam_role_policy" "retrain_lambda_execution_policy" {
           "logs:CreateLogGroup",
           "logs:CreateLogStream"
         ],
-        Resource: "arn:aws:logs:*:*:*"
+        Resource: "arn:aws:logs:${var.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/*"
       },
       {
         Effect: "Allow",
@@ -387,11 +433,29 @@ resource "aws_iam_role_policy" "retrain_lambda_execution_policy" {
           "sagemaker:CreateEndpointConfig",
           "sagemaker:UpdateEndpoint",
           "sagemaker:DescribeEndpoint",
-          "sagemaker:DeleteEndpointConfig",
-          "iam:GetRole",
-          "iam:PassRole"
+          "sagemaker:DeleteEndpointConfig"
         ],
-        Resource: "*"
+        Resource: [
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:training-job/*",
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:model/*",
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:endpoint-config/*",
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:endpoint/*"
+        ]
+      },
+      {
+        Effect: "Allow",
+        Action: "iam:GetRole",
+        Resource: aws_iam_role.sagemaker_recommendation_execution_role.arn
+      },
+      {
+        Effect: "Allow",
+        Action: "iam:PassRole",
+        Resource: aws_iam_role.sagemaker_recommendation_execution_role.arn,
+        Condition: {
+          StringEquals: {
+            "iam:PassedToService": "sagemaker.amazonaws.com"
+          }
+        }
       }
     ]
   })
