@@ -1,0 +1,56 @@
+# Terraform state files
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Sensitive credential files - NEVER commit these
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+*.ppk
+*.cer
+*.crt
+*.der
+*.p7b
+*.p7c
+*.spc
+
+# Environment files that may contain secrets
+.env
+.env.*
+*.env
+
+# AWS credentials
+.aws/
+credentials
+config
+
+# SSH keys
+.ssh/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
