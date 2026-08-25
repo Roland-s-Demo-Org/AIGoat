@@ -102,6 +102,26 @@ def get_products_by_ids(ids, products):
     result = [product for product in products if product.id in id_list]
     return result
 
+def validate_product_id_list(data):
+    """
+    Validates that data is a list containing only integers.
+    Returns the validated list or raises ValueError.
+    """
+    if not isinstance(data, list):
+        raise ValueError("Data must be a list")
+    
+    validated_list = []
+    for item in data:
+        if not isinstance(item, int):
+            try:
+                validated_list.append(int(item))
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid product ID: {item}")
+        else:
+            validated_list.append(item)
+    
+    return validated_list
+
 
 @app.route('/')
 def home():
@@ -126,11 +146,18 @@ def get_recommendations(current_user):
         recommended_products_ids = json.loads(recommended_items_str)
 
         recommended_products_ids = recommended_products_ids[:4]
-        user.recommendations = recommended_products_ids
+        
+        # Validate that recommendations contain only integers
+        try:
+            validated_ids = validate_product_id_list(recommended_products_ids)
+            user.recommendations = validated_ids
+        except ValueError as e:
+            logging.error(f"Invalid recommendation data: {e}")
+            return jsonify({'error': 'Invalid recommendation data'}), 400
 
         db.session.commit()
-        recommended_products = Product.query.filter(Product.id.in_(recommended_products_ids)).all()
-        for product_id in recommended_products_ids:
+        recommended_products = Product.query.filter(Product.id.in_(user.recommendations)).all()
+        for product_id in user.recommendations:
             product = Product.query.get(product_id)
             if product:
                 logging.info(f"Product ID {product_id} exists in database: {product.to_dict()}")

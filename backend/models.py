@@ -183,8 +183,62 @@ class Category(db.Model):
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
-    cart = db.Column(db.PickleType, nullable=False, default=[])
-    recommendations = db.Column(db.PickleType, nullable=False, default=[])
+    _cart = db.Column('cart', db.JSON, nullable=False, default=list)
+    _recommendations = db.Column('recommendations', db.JSON, nullable=False, default=list)
+
+    @property
+    def cart(self):
+        """Get cart as a list of product IDs."""
+        return self._cart if self._cart is not None else []
+    
+    @cart.setter
+    def cart(self, value):
+        """Set cart with validation to ensure it contains only integers."""
+        if value is None:
+            self._cart = []
+            return
+        
+        if not isinstance(value, list):
+            raise ValueError("Cart must be a list")
+        
+        validated_cart = []
+        for item in value:
+            if isinstance(item, int):
+                validated_cart.append(item)
+            else:
+                try:
+                    validated_cart.append(int(item))
+                except (ValueError, TypeError):
+                    raise ValueError(f"Cart must contain only integer product IDs, got: {item}")
+        
+        self._cart = validated_cart
+    
+    @property
+    def recommendations(self):
+        """Get recommendations as a list of product IDs."""
+        return self._recommendations if self._recommendations is not None else []
+    
+    @recommendations.setter
+    def recommendations(self, value):
+        """Set recommendations with validation to ensure it contains only integers."""
+        if value is None:
+            self._recommendations = []
+            return
+        
+        if not isinstance(value, list):
+            raise ValueError("Recommendations must be a list")
+        
+        validated_recommendations = []
+        for item in value:
+            if isinstance(item, int):
+                validated_recommendations.append(item)
+            else:
+                try:
+                    validated_recommendations.append(int(item))
+                except (ValueError, TypeError):
+                    raise ValueError(f"Recommendations must contain only integer product IDs, got: {item}")
+        
+        self._recommendations = validated_recommendations
 
     def to_dict(self):
         return {
