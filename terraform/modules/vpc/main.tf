@@ -38,12 +38,50 @@ resource "aws_subnet" "sub2" {
   }
 }
 
+# Private subnets for RDS (no Internet Gateway route)
+resource "aws_subnet" "sub_private1" {
+  cidr_block        = "10.0.3.0/24"
+  vpc_id            = aws_vpc.vpc.id
+  availability_zone = "us-east-1a"
+  map_public_ip_on_launch = false
+  tags = {
+    Name = "subnt-private1"
+  }
+}
+
+resource "aws_subnet" "sub_private2" {
+  cidr_block        = "10.0.4.0/24"
+  vpc_id            = aws_vpc.vpc.id
+  availability_zone = "us-east-1b"
+  map_public_ip_on_launch = false
+  tags = {
+    Name = "subnt-private2"
+  }
+}
+
+# Private route table (no Internet Gateway route)
+resource "aws_route_table" "rtb_private" {
+  vpc_id = aws_vpc.vpc.id
+  tags = {
+    Name = "rtb-private"
+  }
+}
+
+resource "aws_route_table_association" "subnet-private1-route-association" {
+  subnet_id      = aws_subnet.sub_private1.id
+  route_table_id = aws_route_table.rtb_private.id
+}
+
+resource "aws_route_table_association" "subnet-private2-route-association" {
+  subnet_id      = aws_subnet.sub_private2.id
+  route_table_id = aws_route_table.rtb_private.id
+}
 
 
 resource "aws_db_subnet_group" "dbsubnet" {
   name       = "subnt_grp"
 #   subnet_ids = [aws_subnet.sub1.id, aws_subnet.sub2.id, aws_subnet.sub3.id]
-  subnet_ids = [aws_subnet.sub1.id, aws_subnet.sub2.id]
+  subnet_ids = [aws_subnet.sub_private1.id, aws_subnet.sub_private2.id]
   tags = {
     Name = "subnt_grp"
   }
