@@ -254,3 +254,7 @@ output "api_invoke_url" {
 output "sagemaker_similar_images_bucket_name" {
   value = aws_s3_bucket.sagemaker_similar_images_bucket.bucket
 }
+
+output "sagemaker_similar_images_bucket_arn" {
+  value = aws_s3_bucket.sagemaker_similar_images_bucket.arn
+}

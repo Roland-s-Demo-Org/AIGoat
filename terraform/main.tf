@@ -47,8 +47,10 @@ module "webserver" {
   output_integrity_api_endpoint     = module.output_integrity.api_invoke_url
   supply_chain_api_endpoint         = module.supply_chain.api_invoke_url
   supply_chain_bucket_name          = module.supply_chain.sagemaker_similar_images_bucket_name
+  supply_chain_bucket_arn           = module.supply_chain.sagemaker_similar_images_bucket_arn
   data_poisoning_api_endpoint       = module.data_poisoning.api_invoke_url
   data_poisoning_bucket_name        = module.data_poisoning.sagemaker_recommendation_bucket_name
+  data_poisoning_bucket_arn         = module.data_poisoning.sagemaker_recommendation_bucket_arn
 }
 
 module "front" {
