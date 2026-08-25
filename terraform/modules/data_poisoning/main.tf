@@ -155,7 +155,12 @@ resource "aws_iam_role_policy" "sagemaker_recommendation_bucket_policy" {
       {
         Effect   = "Allow",
         Action   = "iam:PassRole",
-        Resource = "*"
+        Resource = aws_iam_role.sagemaker_recommendation_execution_role.arn,
+        Condition = {
+          StringEquals = {
+            "iam:PassedToService" = "sagemaker.amazonaws.com"
+          }
+        }
       }
     ]
   })
@@ -388,10 +393,19 @@ resource "aws_iam_role_policy" "retrain_lambda_execution_policy" {
           "sagemaker:UpdateEndpoint",
           "sagemaker:DescribeEndpoint",
           "sagemaker:DeleteEndpointConfig",
-          "iam:GetRole",
-          "iam:PassRole"
+          "iam:GetRole"
         ],
         Resource: "*"
+      },
+      {
+        Effect: "Allow",
+        Action: "iam:PassRole",
+        Resource: aws_iam_role.sagemaker_recommendation_execution_role.arn,
+        Condition: {
+          StringEquals: {
+            "iam:PassedToService": "sagemaker.amazonaws.com"
+          }
+        }
       }
     ]
   })
