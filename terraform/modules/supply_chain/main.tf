@@ -45,11 +45,6 @@ resource "aws_iam_role" "sagemaker_similar_images_execution_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "sagemaker_role_policy_attachment" {
-  role       = aws_iam_role.sagemaker_similar_images_execution_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
-}
-
 resource "aws_iam_role_policy" "sagemaker_similar_images_bucket_policy" {
   name = "SageMakerS3Policy"
   role = aws_iam_role.sagemaker_similar_images_execution_role.id
@@ -58,7 +53,13 @@ resource "aws_iam_role_policy" "sagemaker_similar_images_bucket_policy" {
     Statement = [
       {
         Effect   = "Allow",
-        Action   = ["s3:ListBucket", "s3:GetObject", "s3:PutObject"],
+        Action   = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:GetBucketLocation"
+        ],
         Resource = [
           aws_s3_bucket.sagemaker_similar_images_bucket.arn,
           "${aws_s3_bucket.sagemaker_similar_images_bucket.arn}/*"
@@ -121,8 +122,8 @@ resource "aws_iam_role_policy" "lambda_invoke_sagemaker_policy" {
   })
 }
 
-resource "aws_iam_role_policy" "sagemaker_additional_policy" {
-  name = "SageMakerAdditionalPolicy"
+resource "aws_iam_role_policy" "sagemaker_scoped_policy" {
+  name = "SageMakerScopedPolicy"
   role = aws_iam_role.sagemaker_similar_images_execution_role.id
 
   policy = jsonencode({
@@ -131,14 +132,68 @@ resource "aws_iam_role_policy" "sagemaker_additional_policy" {
       {
         Effect = "Allow"
         Action = [
-          "s3:*",
-          "sagemaker:*",
+          "sagemaker:CreateModel",
+          "sagemaker:CreateEndpointConfig",
+          "sagemaker:CreateEndpoint",
+          "sagemaker:CreateTrainingJob",
+          "sagemaker:CreateProcessingJob",
+          "sagemaker:DescribeModel",
+          "sagemaker:DescribeEndpointConfig",
+          "sagemaker:DescribeEndpoint",
+          "sagemaker:DescribeTrainingJob",
+          "sagemaker:DescribeProcessingJob",
+          "sagemaker:UpdateEndpoint",
+          "sagemaker:DeleteModel",
+          "sagemaker:DeleteEndpointConfig",
+          "sagemaker:DeleteEndpoint",
+          "sagemaker:InvokeEndpoint",
+          "sagemaker:ListModels",
+          "sagemaker:ListEndpointConfigs",
+          "sagemaker:ListEndpoints",
+          "sagemaker:ListTrainingJobs",
+          "sagemaker:ListProcessingJobs",
+          "sagemaker:AddTags",
+          "sagemaker:ListTags"
+        ]
+        Resource = [
+          "arn:aws:sagemaker:*:*:model/*",
+          "arn:aws:sagemaker:*:*:endpoint/*",
+          "arn:aws:sagemaker:*:*:endpoint-config/*",
+          "arn:aws:sagemaker:*:*:training-job/*",
+          "arn:aws:sagemaker:*:*:processing-job/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "ecr:GetAuthorizationToken",
           "ecr:BatchCheckLayerAvailability",
           "ecr:GetDownloadUrlForLayer",
           "ecr:BatchGetImage"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams"
+        ]
+        Resource = "arn:aws:logs:*:*:log-group:/aws/sagemaker/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:PassRole"
+        ]
+        Resource = aws_iam_role.sagemaker_similar_images_execution_role.arn
+        Condition = {
+          StringEquals = {
+            "iam:PassedToService" = "sagemaker.amazonaws.com"
+          }
+        }
       }
     ]
   })
