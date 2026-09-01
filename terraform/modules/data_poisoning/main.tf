@@ -29,44 +29,84 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "rec_bucket_encryp
   }
 }
 
+# DynamoDB table for distributed locking and deployment state tracking
+resource "aws_dynamodb_table" "retraining_state_table" {
+  name           = "sagemaker-retraining-state-${random_string.suffix.result}"
+  billing_mode   = "PAY_PER_REQUEST"
+  hash_key       = "lock_key"
+  
+  attribute {
+    name = "lock_key"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
+
+  tags = {
+    Name = "SageMaker Retraining State Table"
+  }
+}
+
 resource "aws_s3_bucket_policy" "s3_bucket_policy" {
   bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
   depends_on = [aws_s3_bucket_ownership_controls.s3_bucket_acl_ownership]
 
-  policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "s3:ListBucket",
-        "s3:GetObject",
-        "s3:DeleteObject",
-        "s3:PutBucketPolicy"
-      ],
-      "Resource": [
-        "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}",
-        "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
-      ]
-    },
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "s3:PutObject"
-      ],
-      "Resource": "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*",
-      "Condition": {
-        "StringEquals": {
-          "s3:x-amz-acl": "bucket-owner-full-control"
-        }
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Principal = {
+          Service = ["sagemaker.amazonaws.com", "lambda.amazonaws.com"]
+        },
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ],
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ]
+      },
+      {
+        Effect = "Allow",
+        Principal = {
+          AWS = aws_iam_role.sagemaker_recommendation_execution_role.arn
+        },
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ],
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ]
+      },
+      {
+        Effect = "Allow",
+        Principal = {
+          AWS = aws_iam_role.lambda_execution_role.arn
+        },
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ],
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ]
       }
-    }
-  ]
-}
-EOF
+    ]
+  })
 }
 
 
@@ -371,7 +411,8 @@ resource "aws_iam_role_policy" "retrain_lambda_execution_policy" {
         Effect: "Allow",
         Action: [
           "s3:GetObject",
-          "s3:ListBucket"
+          "s3:ListBucket",
+          "s3:GetObjectVersion"
         ],
         Resource: [
           aws_s3_bucket.sagemaker_recommendation_bucket.arn,
@@ -387,11 +428,24 @@ resource "aws_iam_role_policy" "retrain_lambda_execution_policy" {
           "sagemaker:CreateEndpointConfig",
           "sagemaker:UpdateEndpoint",
           "sagemaker:DescribeEndpoint",
+          "sagemaker:DescribeEndpointConfig",
           "sagemaker:DeleteEndpointConfig",
           "iam:GetRole",
           "iam:PassRole"
         ],
         Resource: "*"
+      },
+      {
+        Effect: "Allow",
+        Action: [
+          "dynamodb:PutItem",
+          "dynamodb:GetItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "dynamodb:Scan"
+        ],
+        Resource: aws_dynamodb_table.retraining_state_table.arn
       }
     ]
   })
@@ -412,6 +466,8 @@ resource "aws_lambda_function" "retrain_model_lambda" {
     variables = {
       SAGEMAKER_ROLE_NAME = aws_iam_role.sagemaker_recommendation_execution_role.name
       S3_BUCKET_URI       = aws_s3_bucket.sagemaker_recommendation_bucket.bucket
+      DYNAMODB_TABLE_NAME = aws_dynamodb_table.retraining_state_table.name
+      ENDPOINT_NAME       = "reccomendation-system-endpoint"
     }
   }
 }

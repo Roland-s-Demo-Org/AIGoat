@@ -246,106 +246,163 @@ def retrain_model(version_id, etag):
         
         # Get the SageMaker execution role
         role_response = iam_client.get_role(RoleName=role_name)
-        role_arn = role_response['Role']['Arn']
-        
+        role_arn = role_response['Role']['Arn']\n        
         # Create training job with unique name using millisecond timestamp and UUID
         training_job_name = f'sklearn-training-job-{new_generation}-{uuid.uuid4().hex[:8]}'
         sm_client.create_training_job(
-        TrainingJobName=training_job_name,
-        AlgorithmSpecification={
-            'TrainingImage': '683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
-            # Adjust region if needed
-            'TrainingInputMode': 'File'
-        },
-        RoleArn=role_arn,
-        InputDataConfig=[
-            {
-                'ChannelName': 'train',
-                'DataSource': {
-                    'S3DataSource': {
-                        'S3DataType': 'S3Prefix',
-                        'S3Uri': f's3://{s3_bucket_uri}/product_ratings.csv',
-                        'S3DataDistributionType': 'FullyReplicated'
-                    }
-                },
-                'ContentType': 'text/csv'
+            TrainingJobName=training_job_name,
+            AlgorithmSpecification={
+                'TrainingImage': '683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
+                # Adjust region if needed
+                'TrainingInputMode': 'File'
+            },
+            RoleArn=role_arn,
+            InputDataConfig=[
+                {
+                    'ChannelName': 'train',
+                    'DataSource': {
+                        'S3DataSource': {
+                            'S3DataType': 'S3Prefix',
+                            'S3Uri': f's3://{s3_bucket_uri}/product_ratings.csv',
+                            'S3DataDistributionType': 'FullyReplicated'
+                        }
+                    },
+                    'ContentType': 'text/csv'
+                }
+            ],
+            OutputDataConfig={
+                'S3OutputPath': f's3://{s3_bucket_uri}/'
+            },
+            ResourceConfig={
+                'InstanceType': 'ml.m5.4xlarge',
+                'InstanceCount': 1,
+                'VolumeSizeInGB': 30
+            },
+            HyperParameters={
+                'sagemaker_program': 'training_script.py',  # This replaces the EntryPoint
+                'sagemaker_submit_directory': f's3://{s3_bucket_uri}/code/code.tar.gz', # Ensure your script is in this S3 location
+                'bucket_name': s3_bucket_uri  # Pass the S3 bucket name as a hyperparameter
+            },
+            StoppingCondition={
+                'MaxRuntimeInSeconds': 86400
             }
-        ],
-        OutputDataConfig={
-            'S3OutputPath': f's3://{s3_bucket_uri}/'
-        },
-        ResourceConfig={
-            'InstanceType': 'ml.m5.4xlarge',
-            'InstanceCount': 1,
-            'VolumeSizeInGB': 30
-        },
-        HyperParameters={
-            'sagemaker_program': 'training_script.py',  # This replaces the EntryPoint
-            'sagemaker_submit_directory': f's3://{s3_bucket_uri}/code/code.tar.gz', # Ensure your script is in this S3 location
-            'bucket_name': s3_bucket_uri  # Pass the S3 bucket name as a hyperparameter
-        },
-        StoppingCondition={
-            'MaxRuntimeInSeconds': 86400
-        }
-    )
-    # Wait for training job to complete
-    while True:
-        response = sm_client.describe_training_job(TrainingJobName=training_job_name)
-        status = response['TrainingJobStatus']
-        if status in ['Completed', 'Failed', 'Stopped']:
-            break
-        time.sleep(30)
-    if status != 'Completed':
-        raise Exception(f"Training job failed with status: {status}")
-    logger.info("training done\n starting model creation")
-    # Create model
-    model_name = f'sklearn-model-{int(time.time())}'
-    sm_client.create_model(
-        ModelName=model_name,
-        PrimaryContainer={
-            'Image': '683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
-            # Adjust region if needed
-            'ModelDataUrl': f"s3://{s3_bucket_uri}/model.tar.gz",
-            'Environment': {
-                'SAGEMAKER_PROGRAM': 'inference.py',
-                'SAGEMAKER_SUBMIT_DIRECTORY': f's3://{s3_bucket_uri}/code/code.tar.gz'
-                # Ensure your inference script is in this S3 location
-            }
-        },
-        ExecutionRoleArn=role_arn
-    )
-    logger.info("done model creation")
-    # Create endpoint configuration
-    endpoint_config_name = f'endpoint-config-1722516468'
-    sm_client.create_endpoint_config(
-        EndpointConfigName=endpoint_config_name,
-        ProductionVariants=[
-            {
-                'VariantName': 'AllTraffic',
-                'ModelName': model_name,
-                'InitialInstanceCount': 1,
-                'InstanceType': 'ml.m5.4xlarge'
-            }
-        ]
-    )
-    logger.info("done endpoint config")
-    # Update existing endpoint
-    existing_endpoint_name = "reccomendation-system-endpoint"  # The Prod/Existing Endpoint Name
-    sm_client.update_endpoint(
-        EndpointName=existing_endpoint_name,
-        EndpointConfigName=endpoint_config_name
-    )
-    logger.info(f"updating gendpoint +{datetime.datetime.now()}")
-    # Wait for endpoint update to complete
-    while True:
-        response = sm_client.describe_endpoint(EndpointName=existing_endpoint_name)
-        status = response['EndpointStatus']
-        if status in ['InService', 'Failed']:
-            break
-        time.sleep(30)
-    if status != 'InService':
-        raise Exception(f"Endpoint update failed with status: {status}")
-    logger.info(f"done update +{datetime.datetime.now()}")
-    # Clean up temporary endpoint configuration
-    sm_client.delete_endpoint_config(EndpointConfigName=endpoint_config_name)
-    logger.info("Model retraining and endpoint update completed successfully.")
+        )
+        
+        # Wait for training job to complete
+        while True:
+            response = sm_client.describe_training_job(TrainingJobName=training_job_name)
+            status = response['TrainingJobStatus']
+            if status in ['Completed', 'Failed', 'Stopped']:
+                break
+            time.sleep(30)
+        
+        if status != 'Completed':
+            raise Exception(f"Training job failed with status: {status}")
+        
+        logger.info("Training done\nStarting model creation")
+        
+        # Create model with unique name
+        model_name = f'sklearn-model-{new_generation}-{uuid.uuid4().hex[:8]}'
+        sm_client.create_model(
+            ModelName=model_name,
+            PrimaryContainer={
+                'Image': '683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3',
+                # Adjust region if needed
+                'ModelDataUrl': f"s3://{s3_bucket_uri}/model.tar.gz",
+                'Environment': {
+                    'SAGEMAKER_PROGRAM': 'inference.py',
+                    'SAGEMAKER_SUBMIT_DIRECTORY': f's3://{s3_bucket_uri}/code/code.tar.gz'
+                    # Ensure your inference script is in this S3 location
+                }
+            },
+            ExecutionRoleArn=role_arn
+        )
+        logger.info("Done model creation")
+        
+        # Create endpoint configuration with unique name
+        endpoint_config_name = f'endpoint-config-{new_generation}-{uuid.uuid4().hex[:8]}'
+        sm_client.create_endpoint_config(
+            EndpointConfigName=endpoint_config_name,
+            ProductionVariants=[
+                {
+                    'VariantName': 'AllTraffic',
+                    'ModelName': model_name,
+                    'InitialInstanceCount': 1,
+                    'InstanceType': 'ml.m5.4xlarge'
+                }
+            ]
+        )
+        logger.info("Done endpoint config")
+        
+        # Update deployment state with generation check
+        if not update_deployment_state(
+            dynamodb_client, 
+            dynamodb_table, 
+            version_id, 
+            new_generation, 
+            model_name, 
+            endpoint_config_name,
+            current_generation
+        ):
+            logger.warning("Deployment state update failed - newer deployment exists. Cleaning up resources.")
+            # Clean up resources since we won't deploy
+            try:
+                sm_client.delete_endpoint_config(EndpointConfigName=endpoint_config_name)
+            except Exception as e:
+                logger.error(f"Error cleaning up endpoint config: {e}")
+            return
+        
+        # Update existing endpoint with generation check
+        try:
+            # Verify current endpoint config before updating
+            endpoint_desc = sm_client.describe_endpoint(EndpointName=existing_endpoint_name)
+            current_endpoint_config = endpoint_desc.get('EndpointConfigName', '')
+            
+            # Check if a newer config was already deployed
+            if current_state and current_endpoint_config != current_state.get('endpoint_config', ''):
+                logger.warning(f"Endpoint config mismatch - another deployment may have occurred")
+            
+            sm_client.update_endpoint(
+                EndpointName=existing_endpoint_name,
+                EndpointConfigName=endpoint_config_name
+            )
+            logger.info(f"Updating endpoint +{datetime.datetime.now()}")
+            
+            # Wait for endpoint update to complete
+            while True:
+                response = sm_client.describe_endpoint(EndpointName=existing_endpoint_name)
+                status = response['EndpointStatus']
+                if status in ['InService', 'Failed']:
+                    break
+                time.sleep(30)
+            
+            if status != 'InService':
+                raise Exception(f"Endpoint update failed with status: {status}")
+            
+            logger.info(f"Done update +{datetime.datetime.now()}")
+            
+            # Clean up old endpoint configuration if it exists
+            if current_state and current_state.get('endpoint_config'):
+                try:
+                    sm_client.delete_endpoint_config(EndpointConfigName=current_state['endpoint_config'])
+                    logger.info(f"Deleted old endpoint config: {current_state['endpoint_config']}")
+                except Exception as e:
+                    logger.warning(f"Could not delete old endpoint config: {e}")
+            
+            # Mark this version as processed
+            mark_processed(dynamodb_client, dynamodb_table, version_id)
+            
+            logger.info("Model retraining and endpoint update completed successfully.")
+            
+        except Exception as e:
+            logger.error(f"Error updating endpoint: {e}")
+            # Clean up the endpoint config we created since deployment failed
+            try:
+                sm_client.delete_endpoint_config(EndpointConfigName=endpoint_config_name)
+            except Exception as cleanup_error:
+                logger.error(f"Error cleaning up endpoint config: {cleanup_error}")
+            raise
+            
+    finally:
+        # Always release the lock
+        release_lock(dynamodb_client, dynamodb_table, lock_key, lock_value)
