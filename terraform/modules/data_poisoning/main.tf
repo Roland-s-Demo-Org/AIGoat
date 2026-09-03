@@ -17,6 +17,13 @@ resource "aws_s3_bucket" "sagemaker_recommendation_bucket" {
   force_destroy = true
 }
 
+resource "aws_s3_bucket_versioning" "rec_bucket_versioning" {
+  bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "rec_bucket_encryption" {
   bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
 
@@ -33,40 +40,67 @@ resource "aws_s3_bucket_policy" "s3_bucket_policy" {
   bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
   depends_on = [aws_s3_bucket_ownership_controls.s3_bucket_acl_ownership]
 
-  policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "s3:ListBucket",
-        "s3:GetObject",
-        "s3:DeleteObject",
-        "s3:PutBucketPolicy"
-      ],
-      "Resource": [
-        "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}",
-        "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
-      ]
-    },
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "s3:PutObject"
-      ],
-      "Resource": "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*",
-      "Condition": {
-        "StringEquals": {
-          "s3:x-amz-acl": "bucket-owner-full-control"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid    = "DenyUnauthenticatedAccess",
+        Effect = "Deny",
+        Principal = "*",
+        Action = [
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:PutBucketPolicy"
+        ],
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ],
+        Condition = {
+          StringNotLike = {
+            "aws:PrincipalArn" = [
+              aws_iam_role.sagemaker_recommendation_execution_role.arn,
+              aws_iam_role.lambda_execution_role.arn
+            ]
+          }
         }
+      },
+      {
+        Sid    = "AllowAuthenticatedRead",
+        Effect = "Allow",
+        Principal = {
+          AWS = [
+            aws_iam_role.sagemaker_recommendation_execution_role.arn,
+            aws_iam_role.lambda_execution_role.arn
+          ]
+        },
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+          "s3:ListBucket"
+        ],
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ]
+      },
+      {
+        Sid    = "AllowAuthenticatedWrite",
+        Effect = "Allow",
+        Principal = {
+          AWS = [
+            aws_iam_role.sagemaker_recommendation_execution_role.arn,
+            aws_iam_role.lambda_execution_role.arn
+          ]
+        },
+        Action = [
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ],
+        Resource = "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
       }
-    }
-  ]
-}
-EOF
+    ]
+  })
 }
 
 
@@ -81,10 +115,10 @@ resource "aws_s3_bucket_ownership_controls" "s3_bucket_acl_ownership" {
 resource "aws_s3_bucket_public_access_block" "public_access_allow" {
   bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
 
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
 
@@ -219,14 +253,34 @@ resource "aws_iam_role_policy" "sagemaker_additional_policy" {
       {
         Effect = "Allow",
         Action = [
-          "s3:*",
-          "sagemaker:*",
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ],
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ]
+      },
+      {
+        Effect = "Allow",
+        Action = [
           "ecr:GetAuthorizationToken",
           "ecr:BatchCheckLayerAvailability",
           "ecr:GetDownloadUrlForLayer",
           "ecr:BatchGetImage"
         ],
         Resource = "*"
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ],
+        Resource = "arn:aws:logs:*:*:log-group:/aws/sagemaker/*"
       }
     ]
   })
@@ -371,6 +425,7 @@ resource "aws_iam_role_policy" "retrain_lambda_execution_policy" {
         Effect: "Allow",
         Action: [
           "s3:GetObject",
+          "s3:GetObjectVersion",
           "s3:ListBucket"
         ],
         Resource: [
@@ -412,6 +467,8 @@ resource "aws_lambda_function" "retrain_model_lambda" {
     variables = {
       SAGEMAKER_ROLE_NAME = aws_iam_role.sagemaker_recommendation_execution_role.name
       S3_BUCKET_URI       = aws_s3_bucket.sagemaker_recommendation_bucket.bucket
+      TRUSTED_CODE_VERSION_ID = aws_s3_bucket_object.sagemaker_retraining_data["code.tar.gz"].version_id
+      TRUSTED_CODE_ETAG = aws_s3_bucket_object.sagemaker_retraining_data["code.tar.gz"].etag
     }
   }
 }
