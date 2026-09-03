@@ -32,11 +32,39 @@ jobs:
     - name: Check for existing state file
       id: check_state
       run: |
-        if aws s3api head-object --bucket aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }} --key terraform.tfstate 2>/dev/null; then
-          echo "State file exists. Will use existing state."
-          echo "STATE_EXISTS=true" >> $GITHUB_OUTPUT
+        BUCKET_NAME="aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }}"
+        
+        # First verify the bucket exists and we own it
+        if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+          echo "Bucket exists, verifying ownership..."
+          
+          # Verify bucket ownership before any state file operations
+          if ! BUCKET_ACL=$(aws s3api get-bucket-acl --bucket "$BUCKET_NAME" 2>/dev/null); then
+            echo "ERROR: Cannot retrieve bucket ACL. Bucket may be owned by another account."
+            exit 1
+          fi
+          
+          BUCKET_OWNER=$(echo "$BUCKET_ACL" | jq -r '.Owner.ID // empty')
+          OUR_CANONICAL_ID=$(aws s3api list-buckets --query 'Owner.ID' --output text)
+          
+          if [ "$BUCKET_OWNER" != "$OUR_CANONICAL_ID" ]; then
+            echo "ERROR: Bucket is owned by a different AWS account!"
+            echo "Cannot proceed with destroy operation on untrusted bucket."
+            exit 1
+          fi
+          
+          echo "Bucket ownership verified successfully"
+          
+          # Now check for state file
+          if aws s3api head-object --bucket "$BUCKET_NAME" --key terraform.tfstate 2>/dev/null; then
+            echo "State file exists. Will use existing state."
+            echo "STATE_EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "No state file found. Cannot destroy resources without state."
+            echo "STATE_EXISTS=false" >> $GITHUB_OUTPUT
+          fi
         else
-          echo "No state file found. Cannot destroy resources without state."
+          echo "Bucket does not exist. Cannot destroy resources without state."
           echo "STATE_EXISTS=false" >> $GITHUB_OUTPUT
         fi
 
