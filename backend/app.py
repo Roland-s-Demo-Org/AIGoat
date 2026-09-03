@@ -16,6 +16,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 import pickle
 from sqlalchemy import func, cast, and_, or_, case
 from sqlalchemy.dialects.postgresql import JSONB
+from werkzeug.utils import secure_filename
 
 from flask_cors import CORS
 
@@ -187,7 +188,8 @@ def find_similar_images(query_features, features, top_n=5):
 
 
 @app.route('/api/analyze-photo', methods=['OPTIONS', 'POST'])
-def product_lookup():
+@token_required
+def product_lookup(current_user):
     if request.method == 'OPTIONS':
         return '', 204
 
@@ -216,8 +218,20 @@ def product_lookup():
         if not bucket_name or not api_endpoint:
             return jsonify({'error': 'Missing bucket name or API endpoint'}), 400
 
-        photo_filename = photo.filename
-        photo_path = os.path.join('/tmp', photo_filename)
+        # Sanitize filename to prevent path traversal
+        photo_filename = secure_filename(os.path.basename(photo.filename))
+        if not photo_filename:
+            return jsonify({'error': 'Invalid filename'}), 400
+        
+        # Construct path and validate it stays within /tmp
+        upload_dir = '/tmp'
+        photo_path = os.path.join(upload_dir, photo_filename)
+        photo_path = os.path.realpath(photo_path)
+        
+        # Ensure the resolved path is still within /tmp
+        if not photo_path.startswith(os.path.realpath(upload_dir) + os.sep):
+            return jsonify({'error': 'Invalid file path'}), 400
+        
         photo.save(photo_path)
 
         try:
