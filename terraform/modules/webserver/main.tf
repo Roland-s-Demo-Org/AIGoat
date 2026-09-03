@@ -7,11 +7,6 @@ variable "supply_chain_bucket_name" {}
 variable "data_poisoning_api_endpoint" {}
 variable "data_poisoning_bucket_name" {}
 
-resource "aws_key_pair" "key-auth" {
-  key_name   = "webserver-key"
-  public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDPmOyEJHVMpDOsay5XD87y/ul6qFD2Wg+vnwswZNl22Yql9FNKTM7+h5vWdj8wXp+wgB0J/xyrfc4Bwyd7DUxFHHJibN5MS2eCspA3jMBNC//QrKbmCvTLq/laH57Jg78wdQKUtCRKctDU0/7BCVT7/QW613EQMRLuAYr+G+RkZHBwgVA06DOH3k1kMhFg+x8IQqfzpJJ4dWy64eRcayNEWD+DgTuXqGobNxP9dLBMdHx8MY74d8zOVq3LsTwpOUHDTW0U9e5FP27pvBWm01EPj0vaOfG5HaAvdco0AhZsW5JVz0gjrFQuCpfjZC4aow4du3GSIIq+bLHMqxC1jztP1jgzazXuvaGMiqy9HjolD3yyEsvk5FfTMSsTeGVQYyQLce/6jUS/mYYB/Y6JqLZbN7RU5UL/ME89U20eot/7BhYynqf6fgSgPI5HGhwvTC/YrED8ZzpwKDwMM1m8qmXp96A2URbQrIPYfmk638+t5VgNRHH/AjGKf0UDvox5mMD/KLnsqphwdiYXpvFdtuL/xndMqYH4v8TqIC+r+ZgHLYBeTIoQ78ftwD/7J4DN2y8WXSk/aL84k/LvoipWrEAPhhN6xfMiVCavk7v8zn/X6iE4EEDn+tX1Mp3PuMsjcVRSGNx78dxLcMziY+jKkdP3OzVYWG8V941GquS1gv1bQQ== ofir.yakobi@orca.security"
-}
-
 
 data aws_iam_policy_document "ec2_assume_role" {
   statement {
@@ -92,15 +87,14 @@ resource "aws_instance" "backend" {
         sudo touch sensitive_data.txt
         sudo chmod 777 sensitive_data.txt
         sudo echo "{"user_recommendations_dataset": "${var.data_poisoning_bucket_name}"}" >> /home/ec2-user/sensitive_data.txt
-        cd /home/ec2-user/backend
-        sudo pip3 install --upgrade pip setuptools
-        pip3 install -r requirements.txt
+        # Backend application files should be pre-baked into the AMI or deployed via secure methods (e.g., S3, CodeDeploy, Systems Manager)
+        cd /home/ec2-user/backend || exit 0
+        sudo pip3 install --upgrade pip setuptools || exit 0
+        pip3 install -r requirements.txt || exit 0
         export PYTHONPATH=$PYTHONPATH:$(python3 -m site --user-site)
-        python3 migrate_data.py --db_user=pos_user --db_password=password123 --db_host=${aws_db_instance.rds.address} --db_name=postgres
+        python3 migrate_data.py --db_user=pos_user --db_password=password123 --db_host=${aws_db_instance.rds.address} --db_name=postgres || exit 0
         sudo nohup python3 app.py --db_user=pos_user --db_password=password123 --db_host=${aws_db_instance.rds.address} --db_name=postgres --comments_api_gateway=${var.output_integrity_api_endpoint} --similar_images_api_gateway=${var.supply_chain_api_endpoint} --similar_images_bucket=${var.supply_chain_bucket_name} --get_recs_api_gateway=${var.data_poisoning_api_endpoint} --data_poisoning_bucket=${var.data_poisoning_bucket_name} &
   runcmd:
-    - mkdir -p /home/ec2-user/backend
-    - sudo mv /tmp/backend/* /home/ec2-user/backend
     - /home/ec2-user/setup.sh
             EOF
 
@@ -109,17 +103,6 @@ resource "aws_instance" "backend" {
   }
 
   vpc_security_group_ids = [aws_security_group.ec2-sg.id]
-  key_name = aws_key_pair.key-auth.id
-  provisioner "file" {
-    source      = "../backend"
-    destination = "/tmp/backend"
-    connection {
-      type        = "ssh"
-      user        = "ec2-user"
-      private_key = file("${path.module}/../../resources/webserver.pem")
-      host        = self.public_ip
-    }
-  }
 }
 
 resource "aws_security_group" "rds_sg" {
@@ -169,13 +152,6 @@ resource "aws_security_group" "ec2-sg" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
 
   egress {
     from_port       = 0
@@ -196,7 +172,7 @@ resource "aws_db_instance" "rds" {
   allocated_storage    =  10
   engine_version       = data.aws_rds_engine_version.postgres.version
   username             = "pos_user"
-  password             = "password123"
+  password             = ****123"
   vpc_security_group_ids = ["${aws_security_group.rds_sg.id}"]
   db_subnet_group_name   = var.subnet_group_id
   skip_final_snapshot  = true
