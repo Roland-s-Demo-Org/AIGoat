@@ -41,28 +41,11 @@ resource "aws_s3_bucket_policy" "s3_bucket_policy" {
       "Effect": "Allow",
       "Principal": "*",
       "Action": [
-        "s3:ListBucket",
-        "s3:GetObject",
-        "s3:DeleteObject",
-        "s3:PutBucketPolicy"
+        "s3:GetObject"
       ],
       "Resource": [
-        "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}",
         "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
       ]
-    },
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "s3:PutObject"
-      ],
-      "Resource": "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*",
-      "Condition": {
-        "StringEquals": {
-          "s3:x-amz-acl": "bucket-owner-full-control"
-        }
-      }
     }
   ]
 }
@@ -81,9 +64,9 @@ resource "aws_s3_bucket_ownership_controls" "s3_bucket_acl_ownership" {
 resource "aws_s3_bucket_public_access_block" "public_access_allow" {
   bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
 
-  block_public_acls       = false
+  block_public_acls       = true
   block_public_policy     = false
-  ignore_public_acls      = false
+  ignore_public_acls      = true
   restrict_public_buckets = false
 }
 
