@@ -1,0 +1,18 @@
+# Private keys and sensitive credentials
+*.pem
+*.key
+*.ppk
+*.p12
+*.pfx
+
+# Terraform state files
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Sensitive configuration files
+*.env
+.env.*
+secrets.yml
+secrets.yaml
