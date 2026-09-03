@@ -128,11 +128,11 @@ resource "aws_security_group" "rds_sg" {
   vpc_id      = var.vpc_id
 
   ingress {
-    from_port   = 5432
-    to_port     = 5432
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    self        = true
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ec2-sg.id]
+    self            = true
   }
 
   egress {
@@ -196,9 +196,9 @@ resource "aws_db_instance" "rds" {
   allocated_storage    =  10
   engine_version       = data.aws_rds_engine_version.postgres.version
   username             = "pos_user"
-  password             = "password123"
+  password             = ****123"
   vpc_security_group_ids = ["${aws_security_group.rds_sg.id}"]
   db_subnet_group_name   = var.subnet_group_id
   skip_final_snapshot  = true
-  publicly_accessible =  true
+  publicly_accessible =  false
 }
