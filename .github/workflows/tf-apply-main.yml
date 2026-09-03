@@ -32,17 +32,96 @@ jobs:
     - name: Create S3 bucket for Terraform state
       run: |
         BUCKET_NAME="aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }}"
-        if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+        ACCOUNT_ID="${{ steps.account.outputs.ACCOUNT_ID }}"
+        BUCKET_EXISTS=false
+        BUCKET_OWNED=false
+        
+        # Check if bucket exists
+        if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+          BUCKET_EXISTS=true
+          echo "Bucket exists, verifying ownership..."
+          
+          # Verify bucket ownership by checking if we can get bucket location (requires ownership or explicit permission)
+          # and comparing the bucket's owner account ID with our account ID
+          if BUCKET_LOCATION=$(aws s3api get-bucket-location --bucket "$BUCKET_NAME" 2>/dev/null); then
+            # Try to get bucket ACL which requires ownership or explicit permission
+            if BUCKET_ACL=$(aws s3api get-bucket-acl --bucket "$BUCKET_NAME" 2>/dev/null); then
+              # Extract owner ID from ACL and verify it matches our account
+              BUCKET_OWNER=$(echo "$BUCKET_ACL" | jq -r '.Owner.ID // empty')
+              # Get our canonical user ID
+              OUR_CANONICAL_ID=$(aws s3api list-buckets --query 'Owner.ID' --output text)
+              
+              if [ "$BUCKET_OWNER" = "$OUR_CANONICAL_ID" ]; then
+                BUCKET_OWNED=true
+                echo "Bucket ownership verified successfully"
+              else
+                echo "ERROR: Bucket exists but is owned by a different AWS account!"
+                echo "This could be a security issue - the bucket may have been pre-claimed by an attacker."
+                exit 1
+              fi
+            else
+              echo "ERROR: Cannot retrieve bucket ACL. Bucket may be owned by another account."
+              exit 1
+            fi
+          else
+            echo "ERROR: Cannot retrieve bucket location. Bucket may be owned by another account."
+            exit 1
+          fi
+        fi
+        
+        # Create bucket if it doesn't exist or isn't owned by us
+        if [ "$BUCKET_EXISTS" = false ] || [ "$BUCKET_OWNED" = false ]; then
           echo "Creating S3 bucket: $BUCKET_NAME"
           aws s3api create-bucket --bucket "$BUCKET_NAME" --region $AWS_REGION
-        else
-          echo "S3 bucket already exists: $BUCKET_NAME"
+          
+          # Apply security best practices
+          echo "Applying security controls to bucket..."
+          
+          # Enable versioning
+          aws s3api put-bucket-versioning --bucket "$BUCKET_NAME" \
+            --versioning-configuration Status=Enabled
+          
+          # Enable default encryption
+          aws s3api put-bucket-encryption --bucket "$BUCKET_NAME" \
+            --server-side-encryption-configuration '{
+              "Rules": [{
+                "ApplyServerSideEncryptionByDefault": {
+                  "SSEAlgorithm": "AES256"
+                },
+                "BucketKeyEnabled": true
+              }]
+            }'
+          
+          # Block all public access
+          aws s3api put-public-access-block --bucket "$BUCKET_NAME" \
+            --public-access-block-configuration \
+            "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+          
+          echo "Security controls applied successfully"
         fi
 
     - name: Check for existing state file
       id: check_state
       run: |
-        if aws s3api head-object --bucket aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }} --key terraform.tfstate 2>/dev/null; then
+        BUCKET_NAME="aigoat-state-files-${{ steps.account.outputs.ACCOUNT_ID }}"
+        
+        # Verify bucket ownership before checking for state file
+        echo "Verifying bucket ownership before state file operations..."
+        if ! BUCKET_ACL=$(aws s3api get-bucket-acl --bucket "$BUCKET_NAME" 2>/dev/null); then
+          echo "ERROR: Cannot retrieve bucket ACL. Bucket may be owned by another account."
+          exit 1
+        fi
+        
+        BUCKET_OWNER=$(echo "$BUCKET_ACL" | jq -r '.Owner.ID // empty')
+        OUR_CANONICAL_ID=$(aws s3api list-buckets --query 'Owner.ID' --output text)
+        
+        if [ "$BUCKET_OWNER" != "$OUR_CANONICAL_ID" ]; then
+          echo "ERROR: Bucket is owned by a different AWS account!"
+          exit 1
+        fi
+        
+        # Now check for state file
+        if aws s3api head-object --bucket "$BUCKET_NAME" --key terraform.tfstate 2>/dev/null; then
           echo "State file exists. Will use existing state."
           echo "STATE_EXISTS=true" >> $GITHUB_OUTPUT
         else
