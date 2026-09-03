@@ -33,10 +33,10 @@ class FlushHandler(logging.StreamHandler):
 
 
 parser = argparse.ArgumentParser(description='Flask Application')
-parser.add_argument('--db_user', type=str, default='pos_user', help='Database username')
-parser.add_argument('--db_password', type=str, default='password123', help='Database password')
-parser.add_argument('--db_host', type=str, default='localhost', help='Database host')
-parser.add_argument('--db_name', type=str, default='rds-database', help='Database name')
+parser.add_argument('--db_user', type=str, required=True, help='Database username')
+parser.add_argument('--db_password', type=str, required=True, help='Database password')
+parser.add_argument('--db_host', type=str, required=True, help='Database host')
+parser.add_argument('--db_name', type=str, required=True, help='Database name')
 parser.add_argument('--comments_api_gateway', type=str, help='Comments api gateway URL')
 parser.add_argument('--similar_images_api_gateway', type=str, help='Similar images api gateway URL')
 parser.add_argument('--similar_images_bucket', type=str, help='Similar images bucket name')
