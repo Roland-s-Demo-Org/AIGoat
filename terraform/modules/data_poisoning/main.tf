@@ -33,40 +33,62 @@ resource "aws_s3_bucket_policy" "s3_bucket_policy" {
   bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
   depends_on = [aws_s3_bucket_ownership_controls.s3_bucket_acl_ownership]
 
-  policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "s3:ListBucket",
-        "s3:GetObject",
-        "s3:DeleteObject",
-        "s3:PutBucketPolicy"
-      ],
-      "Resource": [
-        "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}",
-        "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
-      ]
-    },
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "s3:PutObject"
-      ],
-      "Resource": "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*",
-      "Condition": {
-        "StringEquals": {
-          "s3:x-amz-acl": "bucket-owner-full-control"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = [
+            "sagemaker.amazonaws.com",
+            "lambda.amazonaws.com"
+          ]
         }
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.sagemaker_recommendation_execution_role.arn
+        }
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.lambda_execution_role.arn
+        }
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ]
       }
-    }
-  ]
-}
-EOF
+    ]
+  })
 }
 
 
@@ -81,10 +103,10 @@ resource "aws_s3_bucket_ownership_controls" "s3_bucket_acl_ownership" {
 resource "aws_s3_bucket_public_access_block" "public_access_allow" {
   bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
 
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
 
@@ -351,6 +373,26 @@ resource "aws_sagemaker_notebook_instance" "recommendation_notebook" {
   security_groups              = [aws_security_group.sagemaker_recommendation_sg.id]
 }
 
+# DynamoDB table for idempotency tracking
+resource "aws_dynamodb_table" "retrain_idempotency" {
+  name           = "retrain-idempotency-${random_string.suffix.result}"
+  billing_mode   = "PAY_PER_REQUEST"
+  hash_key       = "request_id"
+
+  attribute {
+    name = "request_id"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
+
+  tags = {
+    Name = "Retrain Idempotency Table"
+  }
+}
 
 resource "aws_iam_role_policy" "retrain_lambda_execution_policy" {
   name = "retrain-model-policy-${random_string.suffix.result}"
@@ -388,10 +430,21 @@ resource "aws_iam_role_policy" "retrain_lambda_execution_policy" {
           "sagemaker:UpdateEndpoint",
           "sagemaker:DescribeEndpoint",
           "sagemaker:DeleteEndpointConfig",
+          "sagemaker:ListTrainingJobs",
           "iam:GetRole",
           "iam:PassRole"
         ],
         Resource: "*"
+      },
+      {
+        Effect: "Allow",
+        Action: [
+          "dynamodb:PutItem",
+          "dynamodb:GetItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:Query"
+        ],
+        Resource: aws_dynamodb_table.retrain_idempotency.arn
       }
     ]
   })
@@ -410,10 +463,14 @@ resource "aws_lambda_function" "retrain_model_lambda" {
 
   environment {
     variables = {
-      SAGEMAKER_ROLE_NAME = aws_iam_role.sagemaker_recommendation_execution_role.name
-      S3_BUCKET_URI       = aws_s3_bucket.sagemaker_recommendation_bucket.bucket
+      SAGEMAKER_ROLE_NAME    = aws_iam_role.sagemaker_recommendation_execution_role.name
+      S3_BUCKET_URI          = aws_s3_bucket.sagemaker_recommendation_bucket.bucket
+      IDEMPOTENCY_TABLE_NAME = aws_dynamodb_table.retrain_idempotency.name
+      MAX_TRAINING_RUNTIME   = "3600"
     }
   }
+
+  reserved_concurrent_executions = 1
 }
 
 # S3 Bucket Notification
@@ -424,6 +481,7 @@ resource "aws_s3_bucket_notification" "dataset_bucket_notification" {
     lambda_function_arn = aws_lambda_function.retrain_model_lambda.arn
     events              = ["s3:ObjectCreated:Put", "s3:ObjectCreated:Post"]
     filter_prefix       = "product_ratings.csv"
+    filter_suffix       = ""
   }
 
   depends_on = [
