@@ -411,14 +411,14 @@ def hint_1_3():
     return "SSRF - Super Stuffed Rainbow Fluff"
 @app.route('/hints/challenge2/1', methods=['GET'])
 def hint_2_1():
-    return f'{args.data_poisoning_bucket}'
+    return "Check the SageMaker recommendation system"
 
 @app.route('/hints/challenge2/2', methods=['GET'])
 def hint_2_2():
     return "1,3,4, Let's explore the fluffy store!"
 @app.route('/hints/challenge2/3', methods=['GET'])
 def hint_2_3():
-    return '--acl bucket-owner-full-control'
+    return 'Review the SageMaker training pipeline'
 @app.route('/hints/challenge3/1', methods=['GET'])
 def hint_3_1():
     return 'What is the API output?'
