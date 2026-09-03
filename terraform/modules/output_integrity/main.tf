@@ -32,10 +32,8 @@ resource "aws_iam_role" "sagemaker_execution_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "sagemaker_role_policy_attachment" {
-  role       = aws_iam_role.sagemaker_execution_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
-}
+# Removed overly broad AmazonSageMakerFullAccess managed policy
+# Replaced with scoped permissions in sagemaker_additional_policy
 
 resource "aws_iam_role_policy" "sagemaker_bucket_policy" {
   name = "SageMakerS3Policy"
@@ -103,14 +101,51 @@ resource "aws_iam_role_policy" "sagemaker_additional_policy" {
       {
         Effect = "Allow"
         Action = [
-          "s3:*",
-          "sagemaker:*",
+          "sagemaker:CreateTrainingJob",
+          "sagemaker:DescribeTrainingJob",
+          "sagemaker:CreateModel",
+          "sagemaker:DescribeModel",
+          "sagemaker:CreateEndpointConfig",
+          "sagemaker:DescribeEndpointConfig",
+          "sagemaker:CreateEndpoint",
+          "sagemaker:DescribeEndpoint",
+          "sagemaker:InvokeEndpoint"
+        ]
+        Resource = [
+          "arn:aws:sagemaker:${var.region}:*:training-job/*",
+          "arn:aws:sagemaker:${var.region}:*:model/*",
+          "arn:aws:sagemaker:${var.region}:*:endpoint-config/*",
+          "arn:aws:sagemaker:${var.region}:*:endpoint/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "ecr:GetAuthorizationToken",
           "ecr:BatchCheckLayerAvailability",
           "ecr:GetDownloadUrlForLayer",
           "ecr:BatchGetImage"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:${var.region}:*:log-group:/aws/sagemaker/*"
+      },
+      {
+        Effect = "Allow"
+        Action = "iam:PassRole"
+        Resource = aws_iam_role.sagemaker_execution_role.arn
+        Condition = {
+          StringEquals = {
+            "iam:PassedToService" = "sagemaker.amazonaws.com"
+          }
+        }
       }
     ]
   })
