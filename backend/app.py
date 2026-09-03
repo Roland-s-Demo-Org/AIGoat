@@ -13,7 +13,7 @@ import boto3
 from botocore.exceptions import NoCredentialsError
 from vulnerable_image_processor import process_image
 from sklearn.metrics.pairwise import cosine_similarity
-import pickle
+import numpy as np
 from sqlalchemy import func, cast, and_, or_, case
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -234,10 +234,22 @@ def product_lookup():
         if command_output:
             return jsonify({'metadata_output': command_output}), 400
 
-        features_file_key = 'image_features.pkl'  # S3 key for the features file
+        features_file_key = 'image_features.json'  # S3 key for the features file
 
-        response = s3.get_object(Bucket=bucket_name, Key=features_file_key)
-        features = pickle.loads(response['Body'].read())
+        try:
+            response = s3.get_object(Bucket=bucket_name, Key=features_file_key)
+            features_data = json.loads(response['Body'].read().decode('utf-8'))
+            
+            # Convert lists back to numpy arrays for cosine similarity computation
+            features = {}
+            for img_key, img_features in features_data.items():
+                features[img_key] = np.array(img_features)
+        except json.JSONDecodeError as e:
+            app.logger.error(f"Invalid JSON format in features file: {e}")
+            return jsonify({'error': 'Invalid features file format'}), 500
+        except Exception as e:
+            app.logger.error(f"Error loading features file: {e}")
+            return jsonify({'error': 'Error loading features file'}), 500
 
         payload = {
             'bucket_name': bucket_name,
