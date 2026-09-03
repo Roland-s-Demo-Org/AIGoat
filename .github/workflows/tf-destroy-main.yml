@@ -3,7 +3,9 @@ name: 'Terraform Destroy'
 on:
   workflow_dispatch:
 
-permissions: write-all
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   terraform:
@@ -21,8 +23,18 @@ jobs:
         working-directory: ./terraform
 
     steps:
+    - name: Validate ref is main branch
+      run: |
+        if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+          echo "ERROR: This workflow can only be run from the main branch."
+          echo "Current ref: ${{ github.ref }}"
+          exit 1
+        fi
+    
     - name: Checkout
       uses: actions/checkout@v3
+      with:
+        ref: main
 
     - name: Set Account ID
       id: account
