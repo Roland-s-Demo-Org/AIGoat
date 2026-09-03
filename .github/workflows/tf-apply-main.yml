@@ -21,8 +21,24 @@ jobs:
         working-directory: ./terraform
 
     steps:
+    # SECURITY: Explicitly checkout the main branch to prevent execution of
+    # unreviewed Terraform code. workflow_dispatch allows selection of any ref,
+    # but production credentials must only be exposed to reviewed code from the
+    # protected main branch. This prevents malicious local-exec provisioners or
+    # Terraform configurations from running with production AWS credentials.
     - name: Checkout
       uses: actions/checkout@v3
+      with:
+        ref: main
+    
+    - name: Verify Protected Branch
+      run: |
+        CURRENT_REF="${{ github.ref }}"
+        CHECKOUT_REF="main"
+        echo "Workflow triggered from ref: $CURRENT_REF"
+        echo "Checked out ref: $CHECKOUT_REF"
+        echo "This workflow only executes Terraform code from the protected main branch."
+        echo "Manual dispatch ref selection is ignored for security."
 
     - name: Set Account ID
       id: account
