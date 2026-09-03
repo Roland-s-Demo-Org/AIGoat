@@ -1,0 +1,32 @@
+# Example Terraform Variables Configuration
+# Copy this file to terraform.tfvars and fill in your values
+# NEVER commit terraform.tfvars to version control - add it to .gitignore
+
+# AWS Region
+region = "us-east-1"
+
+# VPC CIDR Block
+vpc_cidr = "10.0.0.0/16"
+
+# SSH Public Key for EC2 Instance Access
+# Generate a new SSH key pair:
+#   ssh-keygen -t rsa -b 4096 -f ~/.ssh/webserver_key -C "your_email@example.com"
+# Then paste the contents of ~/.ssh/webserver_key.pub here
+ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQ... your_email@example.com"
+
+# SSH Access Control
+# Restrict SSH access to specific IP ranges for security
+# Leave empty [] to disable SSH access entirely (recommended for production)
+# Example: ["203.0.113.0/24", "198.51.100.0/24"]
+ssh_allowed_cidr_blocks = []
+
+# Backend Application Deployment
+# S3 bucket containing the backend application code (backend.zip)
+# If not provided, backend code must be baked into the AMI
+backend_deployment_bucket = "my-deployment-bucket"
+backend_deployment_key    = "backend.zip"
+
+# Alternative: Use environment variables instead of terraform.tfvars
+# export TF_VAR_ssh_public_key="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQ..."
+# export TF_VAR_ssh_allowed_cidr_blocks='["203.0.113.0/24"]'
+# export TF_VAR_backend_deployment_bucket="my-deployment-bucket"

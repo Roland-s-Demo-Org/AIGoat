@@ -49,6 +49,10 @@ module "webserver" {
   supply_chain_bucket_name          = module.supply_chain.sagemaker_similar_images_bucket_name
   data_poisoning_api_endpoint       = module.data_poisoning.api_invoke_url
   data_poisoning_bucket_name        = module.data_poisoning.sagemaker_recommendation_bucket_name
+  ssh_public_key                    = var.ssh_public_key
+  ssh_allowed_cidr_blocks           = var.ssh_allowed_cidr_blocks
+  backend_deployment_bucket         = var.backend_deployment_bucket
+  backend_deployment_key            = var.backend_deployment_key
 }
 
 module "front" {

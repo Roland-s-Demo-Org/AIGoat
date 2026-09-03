@@ -7,9 +7,33 @@ variable "supply_chain_bucket_name" {}
 variable "data_poisoning_api_endpoint" {}
 variable "data_poisoning_bucket_name" {}
 
+variable "ssh_public_key" {
+  description = "SSH public key for EC2 instance access. Should be provided via environment variable or secure parameter store, never committed to repository."
+  type        = string
+  sensitive   = true
+}
+
+variable "ssh_allowed_cidr_blocks" {
+  description = "CIDR blocks allowed to SSH to the EC2 instance. Restrict to known IP ranges."
+  type        = list(string)
+  default     = []
+}
+
+variable "backend_deployment_bucket" {
+  description = "S3 bucket containing the backend application code archive (backend.zip)"
+  type        = string
+  default     = ""
+}
+
+variable "backend_deployment_key" {
+  description = "S3 key for the backend application code archive"
+  type        = string
+  default     = "backend.zip"
+}
+
 resource "aws_key_pair" "key-auth" {
   key_name   = "webserver-key"
-  public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDPmOyEJHVMpDOsay5XD87y/ul6qFD2Wg+vnwswZNl22Yql9FNKTM7+h5vWdj8wXp+wgB0J/xyrfc4Bwyd7DUxFHHJibN5MS2eCspA3jMBNC//QrKbmCvTLq/laH57Jg78wdQKUtCRKctDU0/7BCVT7/QW613EQMRLuAYr+G+RkZHBwgVA06DOH3k1kMhFg+x8IQqfzpJJ4dWy64eRcayNEWD+DgTuXqGobNxP9dLBMdHx8MY74d8zOVq3LsTwpOUHDTW0U9e5FP27pvBWm01EPj0vaOfG5HaAvdco0AhZsW5JVz0gjrFQuCpfjZC4aow4du3GSIIq+bLHMqxC1jztP1jgzazXuvaGMiqy9HjolD3yyEsvk5FfTMSsTeGVQYyQLce/6jUS/mYYB/Y6JqLZbN7RU5UL/ME89U20eot/7BhYynqf6fgSgPI5HGhwvTC/YrED8ZzpwKDwMM1m8qmXp96A2URbQrIPYfmk638+t5VgNRHH/AjGKf0UDvox5mMD/KLnsqphwdiYXpvFdtuL/xndMqYH4v8TqIC+r+ZgHLYBeTIoQ78ftwD/7J4DN2y8WXSk/aL84k/LvoipWrEAPhhN6xfMiVCavk7v8zn/X6iE4EEDn+tX1Mp3PuMsjcVRSGNx78dxLcMziY+jKkdP3OzVYWG8V941GquS1gv1bQQ== ofir.yakobi@orca.security"
+  public_key = var.ssh_public_key
 }
 
 
@@ -100,7 +124,14 @@ resource "aws_instance" "backend" {
         sudo nohup python3 app.py --db_user=pos_user --db_password=password123 --db_host=${aws_db_instance.rds.address} --db_name=postgres --comments_api_gateway=${var.output_integrity_api_endpoint} --similar_images_api_gateway=${var.supply_chain_api_endpoint} --similar_images_bucket=${var.supply_chain_bucket_name} --get_recs_api_gateway=${var.data_poisoning_api_endpoint} --data_poisoning_bucket=${var.data_poisoning_bucket_name} &
   runcmd:
     - mkdir -p /home/ec2-user/backend
-    - sudo mv /tmp/backend/* /home/ec2-user/backend
+    - |
+      if [ -n "${var.backend_deployment_bucket}" ]; then
+        aws s3 cp s3://${var.backend_deployment_bucket}/${var.backend_deployment_key} /tmp/backend.zip
+        cd /tmp && unzip -q backend.zip -d /tmp/backend
+        sudo mv /tmp/backend/* /home/ec2-user/backend/
+      else
+        echo "WARNING: backend_deployment_bucket not configured. Backend code must be deployed via alternative method (e.g., baked into AMI)."
+      fi
     - /home/ec2-user/setup.sh
             EOF
 
@@ -110,16 +141,6 @@ resource "aws_instance" "backend" {
 
   vpc_security_group_ids = [aws_security_group.ec2-sg.id]
   key_name = aws_key_pair.key-auth.id
-  provisioner "file" {
-    source      = "../backend"
-    destination = "/tmp/backend"
-    connection {
-      type        = "ssh"
-      user        = "ec2-user"
-      private_key = file("${path.module}/../../resources/webserver.pem")
-      host        = self.public_ip
-    }
-  }
 }
 
 resource "aws_security_group" "rds_sg" {
@@ -169,12 +190,18 @@ resource "aws_security_group" "ec2-sg" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  
+  # SSH access is restricted to specified CIDR blocks only
+  # If ssh_allowed_cidr_blocks is empty, no SSH access is permitted
+  dynamic "ingress" {
+    for_each = length(var.ssh_allowed_cidr_blocks) > 0 ? [1] : []
+    content {
+      description = "SSH - restricted access"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = var.ssh_allowed_cidr_blocks
+    }
   }
 
   egress {
@@ -196,7 +223,7 @@ resource "aws_db_instance" "rds" {
   allocated_storage    =  10
   engine_version       = data.aws_rds_engine_version.postgres.version
   username             = "pos_user"
-  password             = "password123"
+  password             = ****123"
   vpc_security_group_ids = ["${aws_security_group.rds_sg.id}"]
   db_subnet_group_name   = var.subnet_group_id
   skip_final_snapshot  = true
