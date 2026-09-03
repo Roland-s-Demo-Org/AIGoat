@@ -22,7 +22,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
 
     - name: Set Account ID
       id: account
@@ -41,7 +41,7 @@ jobs:
         fi
 
     - name: Setup Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@f677139bbe7f9c59b41e40162b753c062f5d49a3 # v2.3.4
       with:
         python-version: 3
 
