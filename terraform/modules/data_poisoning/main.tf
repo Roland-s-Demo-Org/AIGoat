@@ -449,3 +449,7 @@ output "api_invoke_url" {
 output "sagemaker_recommendation_bucket_name" {
   value = aws_s3_bucket.sagemaker_recommendation_bucket.bucket
 }
+
+output "sagemaker_recommendation_bucket_arn" {
+  value = aws_s3_bucket.sagemaker_recommendation_bucket.arn
+}
