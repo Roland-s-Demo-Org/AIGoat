@@ -14,7 +14,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 def parse_args():
     parser = argparse.ArgumentParser(description='Configure database connection parameters.')
     parser.add_argument('--db_user', type=str, default='pos_user', help='Database user')
-    parser.add_argument('--db_password', type=str, default='password123', help='Database password')
+    parser.add_argument('--db_password', type=str, required=True, help='Database password (required)')
     parser.add_argument('--db_host', type=str, default='localhost', help='Database host')
     parser.add_argument('--db_name', type=str, default='rds-database', help='Database name')
     return parser.parse_args()

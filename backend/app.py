@@ -34,7 +34,7 @@ class FlushHandler(logging.StreamHandler):
 
 parser = argparse.ArgumentParser(description='Flask Application')
 parser.add_argument('--db_user', type=str, default='pos_user', help='Database username')
-parser.add_argument('--db_password', type=str, default='password123', help='Database password')
+parser.add_argument('--db_password', type=str, required=True, help='Database password (required)')
 parser.add_argument('--db_host', type=str, default='localhost', help='Database host')
 parser.add_argument('--db_name', type=str, default='rds-database', help='Database name')
 parser.add_argument('--comments_api_gateway', type=str, help='Comments api gateway URL')
