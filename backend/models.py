@@ -183,8 +183,8 @@ class Category(db.Model):
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
-    cart = db.Column(db.PickleType, nullable=False, default=[])
-    recommendations = db.Column(db.PickleType, nullable=False, default=[])
+    cart = db.Column(db.JSON, nullable=False, default=list)
+    recommendations = db.Column(db.JSON, nullable=False, default=list)
 
     def to_dict(self):
         return {
