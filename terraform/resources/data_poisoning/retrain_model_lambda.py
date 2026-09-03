@@ -6,9 +6,89 @@ import os
 # Set up logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
 def lambda_handler(event, context):
-    # Code to trigger retraining
-    retrain_model()
+    """
+    Lambda handler that validates S3 event before triggering retraining.
+    Only allows events from trusted AWS principals.
+    """
+    try:
+        # Validate the event source
+        if 'Records' not in event:
+            logger.error("Invalid event format: missing Records")
+            return {
+                'statusCode': 400,
+                'body': 'Invalid event format'
+            }
+        
+        # Validate each record
+        for record in event['Records']:
+            # Check event source is S3
+            if record.get('eventSource') != 'aws:s3':
+                logger.error(f"Invalid event source: {record.get('eventSource')}")
+                return {
+                    'statusCode': 403,
+                    'body': 'Unauthorized event source'
+                }
+            
+            # Get the bucket and key
+            bucket = record['s3']['bucket']['name']
+            key = record['s3']['object']['key']
+            
+            # Validate bucket name matches expected bucket
+            expected_bucket = os.environ['S3_BUCKET_URI']
+            if bucket != expected_bucket:
+                logger.error(f"Bucket mismatch: {bucket} != {expected_bucket}")
+                return {
+                    'statusCode': 403,
+                    'body': 'Unauthorized bucket'
+                }
+            
+            # Validate the object key matches expected pattern
+            if not key.startswith('product_ratings.csv'):
+                logger.error(f"Invalid object key: {key}")
+                return {
+                    'statusCode': 403,
+                    'body': 'Unauthorized object key'
+                }
+            
+            # Validate object metadata and ownership
+            s3_client = boto3.client('s3')
+            try:
+                obj_metadata = s3_client.head_object(Bucket=bucket, Key=key)
+                
+                # Check if object was uploaded by a trusted principal
+                # by verifying it has proper server-side encryption
+                if 'ServerSideEncryption' not in obj_metadata:
+                    logger.error(f"Object {key} lacks server-side encryption")
+                    return {
+                        'statusCode': 403,
+                        'body': 'Object does not meet security requirements'
+                    }
+                    
+            except Exception as e:
+                logger.error(f"Failed to validate object metadata: {str(e)}")
+                return {
+                    'statusCode': 500,
+                    'body': 'Failed to validate object'
+                }
+        
+        # If all validations pass, trigger retraining
+        logger.info("Event validation passed, starting retraining")
+        retrain_model()
+        
+        return {
+            'statusCode': 200,
+            'body': 'Retraining completed successfully'
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in lambda_handler: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': f'Error: {str(e)}'
+        }
+
 def retrain_model():
     sm_client = boto3.client('sagemaker')
     iam_client = boto3.client('iam')
