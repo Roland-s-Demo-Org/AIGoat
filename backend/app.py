@@ -190,6 +190,17 @@ def find_similar_images(query_features, features, top_n=5):
 def product_lookup():
     if request.method == 'OPTIONS':
         return '', 204
+    
+    # Require authentication for POST requests
+    token = request.headers.get('Authorization').split(" ")[1] if 'Authorization' in request.headers else None
+    if not token:
+        return jsonify({'message': 'Token is missing!'}), 403
+
+    try:
+        data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+        current_user = data['username']
+    except:
+        return jsonify({'message': 'Token is invalid!'}), 403
 
     matched_products = []
     if request.method == 'POST':
@@ -229,10 +240,8 @@ def product_lookup():
 
         with open(photo_path, 'rb') as img_file:
             image_data = img_file.read()
-            command_output = process_image(image_data)
-
-        if command_output:
-            return jsonify({'metadata_output': command_output}), 400
+            # Process image safely - validates and resizes image without executing metadata
+            process_image(image_data)
 
         features_file_key = 'image_features.pkl'  # S3 key for the features file
 
