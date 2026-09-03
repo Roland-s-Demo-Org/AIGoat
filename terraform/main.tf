@@ -43,7 +43,9 @@ module "webserver" {
   source                            = "./modules/webserver"
   vpc_id                            = module.vpc.vpc_id
   subnet_group_id                   = module.vpc.subnet_group_id
+  subnet_group_private_id           = module.vpc.subnet_group_private_id
   subd_public                       = module.vpc.subd_public
+  subd_private                      = module.vpc.subd_private
   output_integrity_api_endpoint     = module.output_integrity.api_invoke_url
   supply_chain_api_endpoint         = module.supply_chain.api_invoke_url
   supply_chain_bucket_name          = module.supply_chain.sagemaker_similar_images_bucket_name
