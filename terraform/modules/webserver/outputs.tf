@@ -1,5 +1,5 @@
 output "backend_url" {
-  value = aws_instance.backend.public_ip
+  value = aws_lb.backend_alb.dns_name
 }
 
 output "rds_endpoint" {

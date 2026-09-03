@@ -27,3 +27,8 @@ output "subd_public" {
   description = "subd-public"
   value       = aws_subnet.subnet-public.id
 }
+
+output "subd_public_2" {
+  description = "subd-public-2 for ALB"
+  value       = aws_subnet.sub1.id
+}

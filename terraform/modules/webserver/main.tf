@@ -1,5 +1,6 @@
 variable "vpc_id" {}
 variable "subd_public" {}
+variable "subd_public_2" {}
 variable "subnet_group_id" {}
 variable "output_integrity_api_endpoint" {}
 variable "supply_chain_api_endpoint" {}
@@ -97,7 +98,7 @@ resource "aws_instance" "backend" {
         pip3 install -r requirements.txt
         export PYTHONPATH=$PYTHONPATH:$(python3 -m site --user-site)
         python3 migrate_data.py --db_user=pos_user --db_password=password123 --db_host=${aws_db_instance.rds.address} --db_name=postgres
-        sudo nohup python3 app.py --db_user=pos_user --db_password=password123 --db_host=${aws_db_instance.rds.address} --db_name=postgres --comments_api_gateway=${var.output_integrity_api_endpoint} --similar_images_api_gateway=${var.supply_chain_api_endpoint} --similar_images_bucket=${var.supply_chain_bucket_name} --get_recs_api_gateway=${var.data_poisoning_api_endpoint} --data_poisoning_bucket=${var.data_poisoning_bucket_name} &
+        sudo nohup python3 app.py --db_user=pos_user --db_password=password123 --db_host=${aws_db_instance.rds.address} --db_name=postgres --comments_api_gateway=${var.output_integrity_api_endpoint} --similar_images_api_gateway=${var.supply_chain_api_endpoint} --similar_images_bucket=${var.supply_chain_bucket_name} --get_recs_api_gateway=${var.data_poisoning_api_endpoint} --data_poisoning_bucket=${var.data_poisoning_bucket_name} --enforce_https &
   runcmd:
     - mkdir -p /home/ec2-user/backend
     - sudo mv /tmp/backend/* /home/ec2-user/backend
@@ -160,8 +161,8 @@ resource "aws_security_group" "ec2-sg" {
     from_port       = 8000
     to_port         = 8000
     protocol        = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    # cidr_blocks = [aws_security_group.allow_http.id]
+    security_groups = [aws_security_group.alb_sg.id]
+    description     = "Allow traffic from ALB only"
   }
   ingress {
     from_port   = 80
@@ -185,6 +186,40 @@ resource "aws_security_group" "ec2-sg" {
   }
 }
 
+# Security group for Application Load Balancer
+resource "aws_security_group" "alb_sg" {
+  name        = "alb-sg"
+  description = "Security group for Application Load Balancer"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow HTTPS from internet"
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow HTTP from internet (for redirect to HTTPS)"
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "alb-security-group"
+  }
+}
+
 data "aws_rds_engine_version" "postgres" {
   engine = "postgres"
 }
@@ -196,9 +231,118 @@ resource "aws_db_instance" "rds" {
   allocated_storage    =  10
   engine_version       = data.aws_rds_engine_version.postgres.version
   username             = "pos_user"
-  password             = "password123"
+  password             = ****123"
   vpc_security_group_ids = ["${aws_security_group.rds_sg.id}"]
   db_subnet_group_name   = var.subnet_group_id
   skip_final_snapshot  = true
   publicly_accessible =  true
+}
+
+# Self-signed certificate for HTTPS (for demonstration - use ACM in production)
+resource "tls_private_key" "alb_key" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+resource "tls_self_signed_cert" "alb_cert" {
+  private_key_pem = tls_private_key.alb_key.private_key_pem
+
+  subject {
+    common_name  = "aigoat-backend.local"
+    organization = "AIGoat Security Demo"
+  }
+
+  validity_period_hours = 8760 # 1 year
+
+  allowed_uses = [
+    "key_encipherment",
+    "digital_signature",
+    "server_auth",
+  ]
+}
+
+resource "aws_acm_certificate" "alb_cert" {
+  private_key      = tls_private_key.alb_key.private_key_pem
+  certificate_body = tls_self_signed_cert.alb_cert.cert_pem
+
+  tags = {
+    Name = "aigoat-alb-certificate"
+  }
+}
+
+# Application Load Balancer
+resource "aws_lb" "backend_alb" {
+  name               = "aigoat-backend-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb_sg.id]
+  subnets            = [var.subd_public, var.subd_public_2]
+
+  enable_deletion_protection = false
+
+  tags = {
+    Name = "aigoat-backend-alb"
+  }
+}
+
+# Target group for backend instances
+resource "aws_lb_target_group" "backend_tg" {
+  name     = "aigoat-backend-tg"
+  port     = 8000
+  protocol = "HTTP"
+  vpc_id   = var.vpc_id
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    interval            = 30
+    matcher             = "200"
+    path                = "/api/products"
+    port                = "traffic-port"
+    protocol            = "HTTP"
+    timeout             = 5
+    unhealthy_threshold = 2
+  }
+
+  tags = {
+    Name = "aigoat-backend-target-group"
+  }
+}
+
+# Attach EC2 instance to target group
+resource "aws_lb_target_group_attachment" "backend_attachment" {
+  target_group_arn = aws_lb_target_group.backend_tg.arn
+  target_id        = aws_instance.backend.id
+  port             = 8000
+}
+
+# HTTPS listener
+resource "aws_lb_listener" "https" {
+  load_balancer_arn = aws_lb.backend_alb.arn
+  port              = "443"
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS-1-2-2017-01"
+  certificate_arn   = aws_acm_certificate.alb_cert.arn
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.backend_tg.arn
+  }
+}
+
+# HTTP listener - redirect to HTTPS
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.backend_alb.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type = "redirect"
+
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
 }
