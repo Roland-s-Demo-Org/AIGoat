@@ -6,7 +6,7 @@ import os
 import random
 from functools import wraps
 import jwt
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, current_app
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, current_app, abort
 import json
 from models import Product, Category, User, db, Comment, product_categories
 import boto3
@@ -42,16 +42,51 @@ parser.add_argument('--similar_images_api_gateway', type=str, help='Similar imag
 parser.add_argument('--similar_images_bucket', type=str, help='Similar images bucket name')
 parser.add_argument('--get_recs_api_gateway', type=str, help='Get user recommendations api gateway URL')
 parser.add_argument('--data_poisoning_bucket', type=str, help='Data Poisoning bucket name')
+parser.add_argument('--enforce_https', action='store_true', help='Enforce HTTPS for all requests')
 
 args = parser.parse_args()
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'a_secret_key_that_you_should_change'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+app.config['ENFORCE_HTTPS'] = args.enforce_https
 
 CORS(app, resources={r"/*": {"origins": "*"}})
 logging.basicConfig(level=logging.DEBUG)
 app.logger.addHandler(FlushHandler())
+
+# HTTPS enforcement and security headers middleware
+@app.before_request
+def enforce_https():
+    """Enforce HTTPS for all requests when configured"""
+    if app.config.get('ENFORCE_HTTPS', False):
+        # Check if request is over HTTPS
+        # In production behind a load balancer, check X-Forwarded-Proto header
+        forwarded_proto = request.headers.get('X-Forwarded-Proto', '')
+        if forwarded_proto.lower() != 'https' and not request.is_secure:
+            # Reject non-HTTPS requests
+            abort(403, description='HTTPS is required for this endpoint')
+
+@app.after_request
+def add_security_headers(response):
+    """Add security headers to all responses"""
+    # Strict-Transport-Security (HSTS) - force HTTPS for 1 year
+    if app.config.get('ENFORCE_HTTPS', False):
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    
+    # Prevent MIME type sniffing
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    
+    # Prevent clickjacking
+    response.headers['X-Frame-Options'] = 'DENY'
+    
+    # XSS protection
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    
+    # Content Security Policy
+    response.headers['Content-Security-Policy'] = "default-src 'self'"
+    
+    return response
 
 app.config['SQLALCHEMY_DATABASE_URI'] = f'postgresql://{args.db_user}:{args.db_password}@{args.db_host}:5432/{args.db_name}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False

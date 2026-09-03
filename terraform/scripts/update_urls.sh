@@ -3,7 +3,7 @@ directory=$1
 url=$2
 
 find "$directory" -type f \( -name "*.html" -o -name "*.js" -o -name "*.js.map" \) -print0 |
-xargs -0 sed -i.bak "s|PLACE_HOLDER|http://$url:8000|g"
+xargs -0 sed -i.bak "s|PLACE_HOLDER|https://$url|g"
 
 # Check if backup files are created
 find "$directory" -name "*.bak" -type f -print

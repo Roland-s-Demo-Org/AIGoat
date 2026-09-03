@@ -1,9 +1,11 @@
-
 output "frontend_url" {
-  value = aws_s3_bucket.frontend_bucket.website_endpoint
+  value = aws_cloudfront_distribution.frontend_distribution.domain_name
 }
 
 output "bucket_url" {
-  value = aws_s3_bucket_website_configuration.frontend_website.website_endpoint
+  value = aws_cloudfront_distribution.frontend_distribution.domain_name
 }
 
+output "cloudfront_url" {
+  value = "https://${aws_cloudfront_distribution.frontend_distribution.domain_name}"
+}
