@@ -1,6 +1,8 @@
 variable "vpc_id" {}
 variable "subd_public" {}
+variable "subd_private" {}
 variable "subnet_group_id" {}
+variable "subnet_group_private_id" {}
 variable "output_integrity_api_endpoint" {}
 variable "supply_chain_api_endpoint" {}
 variable "supply_chain_bucket_name" {}
@@ -73,7 +75,7 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 resource "aws_instance" "backend" {
   depends_on = [aws_db_instance.rds, aws_security_group.rds_sg, aws_security_group.ec2-sg]
   ami           = "ami-0c94855ba95c71c99"
-  subnet_id                   = var.subd_public
+  subnet_id                   = var.subd_private
   iam_instance_profile = aws_iam_instance_profile.ec2_profile.name  # Attach IAM role
   instance_type = "t2.micro"
   user_data = <<-EOF
@@ -110,16 +112,6 @@ resource "aws_instance" "backend" {
 
   vpc_security_group_ids = [aws_security_group.ec2-sg.id]
   key_name = aws_key_pair.key-auth.id
-  provisioner "file" {
-    source      = "../backend"
-    destination = "/tmp/backend"
-    connection {
-      type        = "ssh"
-      user        = "ec2-user"
-      private_key = file("${path.module}/../../resources/webserver.pem")
-      host        = self.public_ip
-    }
-  }
 }
 
 resource "aws_security_group" "rds_sg" {
@@ -128,11 +120,10 @@ resource "aws_security_group" "rds_sg" {
   vpc_id      = var.vpc_id
 
   ingress {
-    from_port   = 5432
-    to_port     = 5432
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    self        = true
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ec2-sg.id]
   }
 
   egress {
@@ -145,7 +136,7 @@ resource "aws_security_group" "rds_sg" {
 
 resource "aws_security_group" "ec2-sg" {
   name        = "ec2-sg"
-  description = "Allow inbound access to RDS"
+  description = "Allow inbound access from ALB and to RDS"
   vpc_id      = var.vpc_id
 
 
@@ -157,24 +148,19 @@ resource "aws_security_group" "ec2-sg" {
     # cidr_blocks = [aws_security_group.allow_http.id]
   }
   ingress {
+    description     = "Application port from ALB"
     from_port       = 8000
     to_port         = 8000
     protocol        = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    security_groups = [aws_security_group.alb_sg.id]
     # cidr_blocks = [aws_security_group.allow_http.id]
   }
   ingress {
+    description     = "HTTP from ALB"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    security_groups = [aws_security_group.alb_sg.id]
   }
 
   egress {
@@ -182,6 +168,109 @@ resource "aws_security_group" "ec2-sg" {
     to_port         = 0
     protocol        = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# Application Load Balancer Security Group
+resource "aws_security_group" "alb_sg" {
+  name        = "alb-sg"
+  description = "Security group for Application Load Balancer"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description = "HTTP from Internet"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Application port from Internet"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "alb-sg"
+  }
+}
+
+# Get public subnets for ALB (needs at least 2 subnets in different AZs)
+data "aws_subnets" "public" {
+  filter {
+    name   = "vpc-id"
+    values = [var.vpc_id]
+  }
+  
+  filter {
+    name   = "tag:Name"
+    values = ["subnt1", "subnt2"]
+  }
+}
+
+# Application Load Balancer
+resource "aws_lb" "backend_alb" {
+  name               = "backend-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb_sg.id]
+  subnets            = data.aws_subnets.public.ids
+
+  tags = {
+    Name = "backend-alb"
+  }
+}
+
+# Target Group for backend application
+resource "aws_lb_target_group" "backend_tg" {
+  name     = "backend-tg"
+  port     = 8000
+  protocol = "HTTP"
+  vpc_id   = var.vpc_id
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    interval            = 30
+    matcher             = "200"
+    path                = "/"
+    port                = "traffic-port"
+    protocol            = "HTTP"
+    timeout             = 5
+    unhealthy_threshold = 2
+  }
+
+  tags = {
+    Name = "backend-tg"
+  }
+}
+
+# Target Group Attachment
+resource "aws_lb_target_group_attachment" "backend_attachment" {
+  target_group_arn = aws_lb_target_group.backend_tg.arn
+  target_id        = aws_instance.backend.id
+  port             = 8000
+}
+
+# ALB Listener
+resource "aws_lb_listener" "backend_listener" {
+  load_balancer_arn = aws_lb.backend_alb.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.backend_tg.arn
   }
 }
 
@@ -196,9 +285,9 @@ resource "aws_db_instance" "rds" {
   allocated_storage    =  10
   engine_version       = data.aws_rds_engine_version.postgres.version
   username             = "pos_user"
-  password             = "password123"
+  password             = ****123"
   vpc_security_group_ids = ["${aws_security_group.rds_sg.id}"]
-  db_subnet_group_name   = var.subnet_group_id
+  db_subnet_group_name   = var.subnet_group_private_id
   skip_final_snapshot  = true
-  publicly_accessible =  true
+  publicly_accessible =  false
 }

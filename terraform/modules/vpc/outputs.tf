@@ -27,3 +27,13 @@ output "subd_public" {
   description = "subd-public"
   value       = aws_subnet.subnet-public.id
 }
+
+output "subd_private" {
+  description = "subd-private"
+  value       = aws_subnet.subnet-private-1.id
+}
+
+output "subnet_group_private_id" {
+  description = "vpc private subnet group for RDS"
+  value       = aws_db_subnet_group.dbsubnet-private.id
+}
