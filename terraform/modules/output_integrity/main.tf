@@ -32,10 +32,8 @@ resource "aws_iam_role" "sagemaker_execution_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "sagemaker_role_policy_attachment" {
-  role       = aws_iam_role.sagemaker_execution_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
-}
+# Removed overly permissive AmazonSageMakerFullAccess managed policy
+# Specific permissions are granted via inline policies below
 
 resource "aws_iam_role_policy" "sagemaker_bucket_policy" {
   name = "SageMakerS3Policy"
@@ -54,7 +52,7 @@ resource "aws_iam_role_policy" "sagemaker_bucket_policy" {
       {
         Effect   = "Allow",
         Action   = "iam:GetRole",
-        Resource = "*"
+        Resource = aws_iam_role.sagemaker_execution_role.arn
       }
     ]
   })
@@ -103,12 +101,66 @@ resource "aws_iam_role_policy" "sagemaker_additional_policy" {
       {
         Effect = "Allow"
         Action = [
-          "s3:*",
-          "sagemaker:*",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.sagemaker_comment_filter_bucket.arn,
+          "${aws_s3_bucket.sagemaker_comment_filter_bucket.arn}/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sagemaker:CreateTrainingJob",
+          "sagemaker:DescribeTrainingJob",
+          "sagemaker:CreateModel",
+          "sagemaker:DescribeModel",
+          "sagemaker:DeleteModel",
+          "sagemaker:CreateEndpointConfig",
+          "sagemaker:DescribeEndpointConfig",
+          "sagemaker:DeleteEndpointConfig",
+          "sagemaker:CreateEndpoint",
+          "sagemaker:DescribeEndpoint",
+          "sagemaker:UpdateEndpoint",
+          "sagemaker:DeleteEndpoint",
+          "sagemaker:InvokeEndpoint",
+          "sagemaker:ListTags",
+          "sagemaker:AddTags"
+        ]
+        Resource = [
+          "arn:aws:sagemaker:*:*:training-job/*",
+          "arn:aws:sagemaker:*:*:model/*",
+          "arn:aws:sagemaker:*:*:endpoint-config/*",
+          "arn:aws:sagemaker:*:*:endpoint/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "ecr:GetAuthorizationToken",
           "ecr:BatchCheckLayerAvailability",
           "ecr:GetDownloadUrlForLayer",
           "ecr:BatchGetImage"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams"
+        ]
+        Resource = "arn:aws:logs:*:*:log-group:/aws/sagemaker/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:PutMetricData"
         ]
         Resource = "*"
       }
