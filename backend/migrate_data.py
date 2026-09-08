@@ -38,12 +38,6 @@ def parse_datetime(date_str):
         return datetime.fromisoformat(date_str.rstrip('Z'))
     return None
 
-def safe_float(value):
-    try:
-        return float(value) if value not in ('', None) else None
-    except ValueError:
-        return None
-
 def load_json(filename):
     with open(filename, 'r') as file:
         return json.load(file)
