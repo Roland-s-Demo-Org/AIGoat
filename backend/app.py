@@ -187,7 +187,8 @@ def find_similar_images(query_features, features, top_n=5):
 
 
 @app.route('/api/analyze-photo', methods=['OPTIONS', 'POST'])
-def product_lookup():
+@token_required
+def product_lookup(current_user):
     if request.method == 'OPTIONS':
         return '', 204
 
@@ -227,12 +228,14 @@ def product_lookup():
             app.logger.error("Credentials not available")
             return jsonify({'error': 'Credentials not available'}), 500
 
+        # Validate and process the image
         with open(photo_path, 'rb') as img_file:
             image_data = img_file.read()
-            command_output = process_image(image_data)
-
-        if command_output:
-            return jsonify({'metadata_output': command_output}), 400
+            try:
+                process_image(image_data)
+            except Exception as e:
+                app.logger.error(f"Error processing image: {e}")
+                return jsonify({'error': 'Invalid image file'}), 400
 
         features_file_key = 'image_features.pkl'  # S3 key for the features file
 
