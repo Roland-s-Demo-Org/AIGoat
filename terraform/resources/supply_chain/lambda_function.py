@@ -18,7 +18,7 @@ def preprocess_image(image_bytes):
     image = image.resize((224, 224))  # Resize the image to the required input size
     image_array = np.array(image)
 
-    if image_array.shape[-1] == 1:  # Grayscale to RGB conversion
+    if image_array.ndim == 2 or image_array.shape[-1] == 1:  # Grayscale to RGB conversion
         image_array = np.repeat(image_array[..., np.newaxis], 3, -1)
 
     image_array = np.expand_dims(image_array, axis=0)  # Add batch dimension
