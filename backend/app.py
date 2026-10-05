@@ -4,6 +4,7 @@ import requests
 import argparse
 import os
 import random
+import uuid
 from functools import wraps
 import jwt
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, current_app
@@ -69,15 +70,29 @@ users = {
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.headers.get('Authorization').split(" ")[1] if 'Authorization' in request.headers else None
-        if not token:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
             return jsonify({'message': 'Token is missing!'}), 403
+        
+        try:
+            # Safely parse Authorization header
+            parts = auth_header.split(" ")
+            if len(parts) != 2 or parts[0] != 'Bearer':
+                return jsonify({'message': 'Invalid authorization header format!'}), 403
+            token = parts[1]
+        except (AttributeError, IndexError):
+            return jsonify({'message': 'Invalid authorization header!'}), 403
 
         try:
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
             current_user = data['username']
-        except:
+        except jwt.ExpiredSignatureError:
+            return jsonify({'message': 'Token has expired!'}), 403
+        except jwt.InvalidTokenError:
             return jsonify({'message': 'Token is invalid!'}), 403
+        except Exception as e:
+            app.logger.error(f"Token validation error: {e}")
+            return jsonify({'message': 'Token validation failed!'}), 403
 
         return f(current_user, *args, **kwargs)
 
@@ -91,7 +106,23 @@ user_carts = {
 
 
 def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'jpg', 'jpeg', 'png'}
+    """
+    Validate file extension for uploaded images.
+    
+    Args:
+        filename: The filename to validate
+        
+    Returns:
+        bool: True if file extension is allowed, False otherwise
+    """
+    if not filename or '.' not in filename:
+        return False
+    
+    # Get extension and validate
+    ext = filename.rsplit('.', 1)[1].lower()
+    allowed_extensions = {'jpg', 'jpeg', 'png'}
+    
+    return ext in allowed_extensions
 
 
 def get_product_by_id(product_id):
@@ -187,7 +218,8 @@ def find_similar_images(query_features, features, top_n=5):
 
 
 @app.route('/api/analyze-photo', methods=['OPTIONS', 'POST'])
-def product_lookup():
+@token_required
+def product_lookup(current_user):
     if request.method == 'OPTIONS':
         return '', 204
 
@@ -216,23 +248,47 @@ def product_lookup():
         if not bucket_name or not api_endpoint:
             return jsonify({'error': 'Missing bucket name or API endpoint'}), 400
 
-        photo_filename = photo.filename
-        photo_path = os.path.join('/tmp', photo_filename)
+        # Sanitize filename to prevent path traversal
+        photo_filename = os.path.basename(photo.filename)
+        # Generate a safe unique filename
+        safe_filename = f"{uuid.uuid4()}_{photo_filename}"
+        photo_path = os.path.join('/tmp', safe_filename)
         photo.save(photo_path)
 
         try:
-            s3.upload_file(photo_path, bucket_name, photo_filename)
-            app.logger.info(f"Uploaded {photo_filename} to S3 bucket {bucket_name}")
+            # Validate and process image before uploading
+            with open(photo_path, 'rb') as img_file:
+                image_data = img_file.read()
+                # Validate image - this will raise ValueError if invalid
+                try:
+                    process_image(image_data)
+                except ValueError as e:
+                    app.logger.error(f"Invalid image: {e}")
+                    # Clean up temp file
+                    if os.path.exists(photo_path):
+                        os.remove(photo_path)
+                    return jsonify({'error': 'Invalid image file'}), 400
+            
+            s3.upload_file(photo_path, bucket_name, safe_filename)
+            app.logger.info(f"Uploaded image to S3 bucket {bucket_name}")
+            # Update photo_filename for subsequent use
+            photo_filename = safe_filename
         except NoCredentialsError:
             app.logger.error("Credentials not available")
+            # Clean up temp file
+            if os.path.exists(photo_path):
+                os.remove(photo_path)
             return jsonify({'error': 'Credentials not available'}), 500
-
-        with open(photo_path, 'rb') as img_file:
-            image_data = img_file.read()
-            command_output = process_image(image_data)
-
-        if command_output:
-            return jsonify({'metadata_output': command_output}), 400
+        except Exception as e:
+            app.logger.error(f"Error uploading file: {e}")
+            # Clean up temp file
+            if os.path.exists(photo_path):
+                os.remove(photo_path)
+            return jsonify({'error': 'Error processing image'}), 500
+        finally:
+            # Always clean up temp file
+            if os.path.exists(photo_path):
+                os.remove(photo_path)
 
         features_file_key = 'image_features.pkl'  # S3 key for the features file
 
