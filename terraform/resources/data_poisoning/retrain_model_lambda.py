@@ -3,12 +3,116 @@ import time
 import datetime
 import logging
 import os
+import json
+import hashlib
 # Set up logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+# Expected checksums for critical files (should be set during deployment)
+EXPECTED_CHECKSUMS = {
+    'code/code.tar.gz': os.environ.get('CODE_CHECKSUM', ''),
+    'product_ratings.csv': os.environ.get('DATA_CHECKSUM', '')
+}
+
+def calculate_s3_object_checksum(bucket, key):
+    """Calculate SHA256 checksum of an S3 object"""
+    try:
+        s3_client = boto3.client('s3')
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        content = response['Body'].read()
+        return hashlib.sha256(content).hexdigest()
+    except Exception as e:
+        logger.error(f"Error calculating checksum for {key}: {str(e)}")
+        return None
+
+def validate_artifact_integrity(bucket):
+    """Validate integrity of training artifacts"""
+    for key, expected_checksum in EXPECTED_CHECKSUMS.items():
+        if not expected_checksum:
+            logger.warning(f"No expected checksum configured for {key}, skipping validation")
+            continue
+            
+        actual_checksum = calculate_s3_object_checksum(bucket, key)
+        if actual_checksum != expected_checksum:
+            logger.error(f"Integrity check failed for {key}: expected {expected_checksum}, got {actual_checksum}")
+            return False
+    
+    logger.info("All artifact integrity checks passed")
+    return True
+
 def lambda_handler(event, context):
-    # Code to trigger retraining
-    retrain_model()
+    # Validate the event source and structure
+    try:
+        # Ensure event is from S3
+        if 'Records' not in event:
+            logger.error("Invalid event structure: missing Records")
+            return {
+                'statusCode': 400,
+                'body': json.dumps('Invalid event structure')
+            }
+        
+        # Get expected bucket name from environment
+        expected_bucket = os.environ.get('S3_BUCKET_URI')
+        
+        # Validate each record
+        for record in event['Records']:
+            # Verify event source is S3
+            if record.get('eventSource') != 'aws:s3':
+                logger.error(f"Invalid event source: {record.get('eventSource')}")
+                return {
+                    'statusCode': 403,
+                    'body': json.dumps('Unauthorized event source')
+                }
+            
+            # Verify bucket name matches expected bucket
+            bucket_name = record.get('s3', {}).get('bucket', {}).get('name')
+            if bucket_name != expected_bucket:
+                logger.error(f"Bucket mismatch: {bucket_name} != {expected_bucket}")
+                return {
+                    'statusCode': 403,
+                    'body': json.dumps('Unauthorized bucket')
+                }
+            
+            # Verify object key is the expected dataset file
+            object_key = record.get('s3', {}).get('object', {}).get('key')
+            if not object_key or not object_key.startswith('product_ratings.csv'):
+                logger.error(f"Invalid object key: {object_key}")
+                return {
+                    'statusCode': 403,
+                    'body': json.dumps('Unauthorized object key')
+                }
+            
+            # Verify the principal is from the same AWS account
+            user_identity = record.get('userIdentity', {})
+            principal_id = user_identity.get('principalId', '')
+            
+            # Log the validated event
+            logger.info(f"Validated S3 event from bucket: {bucket_name}, key: {object_key}")
+        
+        # Validate artifact integrity before retraining
+        if not validate_artifact_integrity(expected_bucket):
+            logger.error("Artifact integrity validation failed, aborting retraining")
+            return {
+                'statusCode': 403,
+                'body': json.dumps('Artifact integrity validation failed')
+            }
+        
+        # Code to trigger retraining only after validation
+        retrain_model()
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Retraining initiated successfully')
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing event: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps(f'Error: {str(e)}')
+        }
+
 def retrain_model():
     sm_client = boto3.client('sagemaker')
     iam_client = boto3.client('iam')

@@ -400,33 +400,42 @@ def recommendations_endpoint_status():
         return jsonify({"error": e}), 500
 
 @app.route('/hints/challenge1/1', methods=['GET'])
-def hint_1_1():
+@token_required
+def hint_1_1(current_user):
     return "Look for some errors"
 @app.route('/hints/challenge1/2', methods=['GET'])
-def hint_1_2():
+@token_required
+def hint_1_2(current_user):
     return "Have you heard about malicious PNGs?"
 
 @app.route('/hints/challenge1/3', methods=['GET'])
-def hint_1_3():
+@token_required
+def hint_1_3(current_user):
     return "SSRF - Super Stuffed Rainbow Fluff"
 @app.route('/hints/challenge2/1', methods=['GET'])
-def hint_2_1():
-    return f'{args.data_poisoning_bucket}'
+@token_required
+def hint_2_1(current_user):
+    return "Bucket access is restricted to authorized principals only"
 
 @app.route('/hints/challenge2/2', methods=['GET'])
-def hint_2_2():
+@token_required
+def hint_2_2(current_user):
     return "1,3,4, Let's explore the fluffy store!"
 @app.route('/hints/challenge2/3', methods=['GET'])
-def hint_2_3():
-    return '--acl bucket-owner-full-control'
+@token_required
+def hint_2_3(current_user):
+    return "Access controls are enforced at the bucket policy level"
 @app.route('/hints/challenge3/1', methods=['GET'])
-def hint_3_1():
+@token_required
+def hint_3_1(current_user):
     return 'What is the API output?'
 @app.route('/hints/challenge3/2', methods=['GET'])
-def hint_3_2():
+@token_required
+def hint_3_2(current_user):
     return "If you hear a BURP, it's probably just the teddy bears having a tea party in their SUITE"
 @app.route('/hints/challenge3/3', methods=['GET'])
-def hint_3_3():
+@token_required
+def hint_3_3(current_user):
     return 'When an answer is provided, is there a point in asking a question?'
 
 if __name__ == '__main__':
