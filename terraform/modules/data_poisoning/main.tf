@@ -2,6 +2,9 @@ variable "region" {}
 variable "subd_public" {}
 variable "vpc_id" {}
 
+# Get current AWS account ID
+data "aws_caller_identity" "current" {}
+
 # Generate a unique suffix
 resource "random_string" "suffix" {
   length  = 8
@@ -15,6 +18,20 @@ resource "random_string" "suffix" {
 resource "aws_s3_bucket" "sagemaker_recommendation_bucket" {
   bucket        = "sagemaker-recommendation-bucket-${random_string.suffix.result}"
   force_destroy = true
+}
+
+resource "aws_s3_bucket_versioning" "rec_bucket_versioning" {
+  bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_logging" "rec_bucket_logging" {
+  bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
+
+  target_bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
+  target_prefix = "access-logs/"
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "rec_bucket_encryption" {
@@ -33,40 +50,57 @@ resource "aws_s3_bucket_policy" "s3_bucket_policy" {
   bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
   depends_on = [aws_s3_bucket_ownership_controls.s3_bucket_acl_ownership]
 
-  policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "s3:ListBucket",
-        "s3:GetObject",
-        "s3:DeleteObject",
-        "s3:PutBucketPolicy"
-      ],
-      "Resource": [
-        "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}",
-        "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
-      ]
-    },
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "s3:PutObject"
-      ],
-      "Resource": "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*",
-      "Condition": {
-        "StringEquals": {
-          "s3:x-amz-acl": "bucket-owner-full-control"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid    = "DenyPublicAccess"
+        Effect = "Deny"
+        Principal = "*"
+        Action = "s3:*"
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ]
+        Condition = {
+          StringNotEquals = {
+            "aws:PrincipalAccount" = data.aws_caller_identity.current.account_id
+          }
         }
+      },
+      {
+        Sid    = "AllowSageMakerRole"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.sagemaker_recommendation_execution_role.arn
+        }
+        Action = [
+          "s3:ListBucket",
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ]
+      },
+      {
+        Sid    = "AllowLambdaRole"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.lambda_execution_role.arn
+        }
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ]
       }
-    }
-  ]
-}
-EOF
+    ]
+  })
 }
 
 
@@ -81,10 +115,10 @@ resource "aws_s3_bucket_ownership_controls" "s3_bucket_acl_ownership" {
 resource "aws_s3_bucket_public_access_block" "public_access_allow" {
   bucket = aws_s3_bucket.sagemaker_recommendation_bucket.id
 
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
 
@@ -141,7 +175,7 @@ resource "aws_iam_role_policy" "sagemaker_recommendation_bucket_policy" {
     Statement = [
       {
         Effect   = "Allow",
-        Action   = ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+        Action   = ["s3:ListBucket", "s3:GetObject", "s3:PutObject"],
         Resource = [
           aws_s3_bucket.sagemaker_recommendation_bucket.arn,
           "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
@@ -150,12 +184,17 @@ resource "aws_iam_role_policy" "sagemaker_recommendation_bucket_policy" {
       {
         Effect   = "Allow",
         Action   = "iam:GetRole",
-        Resource = "*"
+        Resource = aws_iam_role.sagemaker_recommendation_execution_role.arn
       },
       {
         Effect   = "Allow",
         Action   = "iam:PassRole",
-        Resource = "*"
+        Resource = aws_iam_role.sagemaker_recommendation_execution_role.arn
+        Condition = {
+          StringEquals = {
+            "iam:PassedToService" = "sagemaker.amazonaws.com"
+          }
+        }
       }
     ]
   })
@@ -219,14 +258,36 @@ resource "aws_iam_role_policy" "sagemaker_additional_policy" {
       {
         Effect = "Allow",
         Action = [
-          "s3:*",
-          "sagemaker:*",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ],
+        Resource = [
+          aws_s3_bucket.sagemaker_recommendation_bucket.arn,
+          "${aws_s3_bucket.sagemaker_recommendation_bucket.arn}/*"
+        ]
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "sagemaker:DescribeTrainingJob",
+          "sagemaker:DescribeEndpoint",
+          "sagemaker:DescribeModel",
           "ecr:GetAuthorizationToken",
           "ecr:BatchCheckLayerAvailability",
           "ecr:GetDownloadUrlForLayer",
           "ecr:BatchGetImage"
         ],
         Resource = "*"
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ],
+        Resource = "arn:aws:logs:*:*:log-group:/aws/sagemaker/*"
       }
     ]
   })
@@ -387,11 +448,29 @@ resource "aws_iam_role_policy" "retrain_lambda_execution_policy" {
           "sagemaker:CreateEndpointConfig",
           "sagemaker:UpdateEndpoint",
           "sagemaker:DescribeEndpoint",
-          "sagemaker:DeleteEndpointConfig",
-          "iam:GetRole",
-          "iam:PassRole"
+          "sagemaker:DeleteEndpointConfig"
         ],
-        Resource: "*"
+        Resource: [
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:training-job/*",
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:model/*",
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:endpoint-config/*",
+          "arn:aws:sagemaker:${var.region}:${data.aws_caller_identity.current.account_id}:endpoint/reccomendation-system-endpoint"
+        ]
+      },
+      {
+        Effect: "Allow",
+        Action: "iam:GetRole",
+        Resource: aws_iam_role.sagemaker_recommendation_execution_role.arn
+      },
+      {
+        Effect: "Allow",
+        Action: "iam:PassRole",
+        Resource: aws_iam_role.sagemaker_recommendation_execution_role.arn
+        Condition: {
+          StringEquals: {
+            "iam:PassedToService": "sagemaker.amazonaws.com"
+          }
+        }
       }
     ]
   })
