@@ -76,6 +76,11 @@ resource "aws_instance" "backend" {
   subnet_id                   = var.subd_public
   iam_instance_profile = aws_iam_instance_profile.ec2_profile.name  # Attach IAM role
   instance_type = "t2.micro"
+  metadata_options {
+    http_endpoint = "enabled"
+    http_tokens = "required"
+    http_put_response_hop_limit = 1
+  }
   user_data = <<-EOF
   #cloud-config
   write_files:
