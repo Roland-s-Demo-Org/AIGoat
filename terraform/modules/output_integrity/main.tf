@@ -17,6 +17,15 @@ resource "aws_s3_bucket" "sagemaker_comment_filter_bucket" {
   force_destroy = true
 }
 
+resource "aws_s3_bucket_public_access_block" "sagemaker_comment_filter_bucket_pab" {
+  bucket = aws_s3_bucket.sagemaker_comment_filter_bucket.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
 # IAM role for SageMaker
 resource "aws_iam_role" "sagemaker_execution_role" {
   name = "AmazonSageMaker-ExecutionRole-${random_string.suffix.result}"
