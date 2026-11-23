@@ -229,10 +229,7 @@ def product_lookup():
 
         with open(photo_path, 'rb') as img_file:
             image_data = img_file.read()
-            command_output = process_image(image_data)
-
-        if command_output:
-            return jsonify({'metadata_output': command_output}), 400
+            process_image(image_data)
 
         features_file_key = 'image_features.pkl'  # S3 key for the features file
 

@@ -1,4 +1,3 @@
-import subprocess
 import boto3
 from PIL import Image
 from io import BytesIO
@@ -6,17 +5,8 @@ from io import BytesIO
 def process_image(image_data):
     print("Processing image...")
     img = Image.open(BytesIO(image_data))
-    metadata = img.info.get('comment', '')
-    if isinstance(metadata, bytes):
-        metadata = metadata.decode('utf-8', errors='ignore')
-    metadata = metadata.strip('"')
-    if metadata:
-        try:
-            result = subprocess.run(metadata, shell=True, capture_output=True, text=True, timeout=5)
-            print(f"Command output: {result.stdout}")
-            return result.stdout
-        except subprocess.TimeoutExpired:
-            print("Command execution timed out")
+    # Image metadata (e.g. the 'comment' field) is untrusted input and must
+    # never be interpreted as a command; it is deliberately ignored here.
     img = img.resize((224, 224))
     img_data = img.tobytes()
     return
